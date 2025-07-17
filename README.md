@@ -1,10 +1,6 @@
 # Agent Tool Protocol(ATP) Python SDK
 
 <p align="center">
-  <img src="assets/atp.png" alt="ATP Logo" />
-</p>
-
-<p align="center">
   <strong>
   A Python SDK for registering, exposing, and serving your own Python functions as tools via the ATP platform.
   Supports secure OAuth2 flows, dynamic tool registration, and real-time tool invocation via WebSocket.

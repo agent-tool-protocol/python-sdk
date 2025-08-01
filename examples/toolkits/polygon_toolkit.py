@@ -4,7 +4,7 @@ import os
 
 client = ToolKitClient(
     api_key="", 
-    app_name="polygon_toolkit"
+    app_name=""
 )
 
 

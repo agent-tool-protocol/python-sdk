@@ -380,10 +380,11 @@ class LLMClient:
             base_url (str, optional): WebSocket server URL. Defaults to "wss://chatatp-backend.onrender.com/ws/v1/atp/llm-client/".
         """
         self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
+        self.base_url = f"{base_url.rstrip("/")}/{api_key}/"
         self.ws = None
         self.lock = threading.Lock()
         self.response_data = {}
+        self.authenticated = False  # Track authentication status
         self._connect()
 
     def _connect(self) -> None:
@@ -391,7 +392,7 @@ class LLMClient:
         Establish a WebSocket connection with authentication.
         """
         with self.lock:
-            if self.ws and self.ws.sock and self.ws.sock.connected:
+            if self.ws and self.ws.sock and self.ws.sock.connected and self.authenticated:
                 return
 
             try:
@@ -405,6 +406,13 @@ class LLMClient:
                 ws_thread = threading.Thread(target=self.ws.run_forever, kwargs={"ping_interval": 30})
                 ws_thread.daemon = True
                 ws_thread.start()
+
+                # Wait for authentication
+                start_time = time.time()
+                while not self.authenticated and time.time() - start_time < 10:  # 10s timeout
+                    time.sleep(0.1)
+                if not self.authenticated:
+                    raise WebSocketException("Authentication timed out.")
             except Exception as e:
                 logger.error(f"Failed to initiate WebSocket connection: {e}")
                 raise WebSocketException(f"Failed to initiate WebSocket connection: {e}")
@@ -443,6 +451,7 @@ class LLMClient:
                     ws.close()
                 else:
                     logger.info("Authentication successful.")
+                    self.authenticated = True  # Set flag on successful auth
             elif message_type in ["toolkit_context", "task_response"]:
                 self.response_data[request_id] = data.get("payload", {})
             else:
@@ -460,7 +469,10 @@ class LLMClient:
             ws (websocket.WebSocketApp): WebSocket connection instance.
             error (Exception): Error encountered.
         """
-        logger.error(f"WebSocket error: {error}")
+        logger.error(f"WebSocket error: {error}, type: {type(error).__name__}")
+        with self.lock:
+            self.ws = None
+            self.authenticated = False
 
     def _on_close(self, ws: websocket.WebSocketApp, close_status_code: int, close_msg: str) -> None:
         """
@@ -474,6 +486,7 @@ class LLMClient:
         logger.info(f"WebSocket closed with code {close_status_code}: {close_msg}")
         with self.lock:
             self.ws = None
+            self.authenticated = False
 
     def get_toolkit_context(self, toolkit_id: str, user_prompt: str) -> str:
         """
@@ -491,6 +504,8 @@ class LLMClient:
             ValueError: If the server returns an invalid response type.
         """
         self._connect()
+        if not self.authenticated:
+            raise WebSocketException("WebSocket not authenticated.")
         request_id = f"context_{toolkit_id}_{str(uuid.uuid4())}"
         message = json.dumps({
             "type": "get_toolkit_context",

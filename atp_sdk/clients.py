@@ -565,7 +565,8 @@ class LLMClient:
         request_id = f"task_{toolkit_id}_{str(uuid.uuid4())}"
         try:
             cleaned_json = clean_json_string(json_response)
-            json.loads(cleaned_json)  # Validate JSON
+            logger.debug(f"Cleaned JSON: \n\n{cleaned_json}")
+            final_json = json.loads(cleaned_json)  # Validate JSON
         except json.JSONDecodeError as e:
             raise json.JSONDecodeError(f"Invalid JSON response: {e}", e.doc, e.pos)
 
@@ -573,7 +574,7 @@ class LLMClient:
             "type": "task_request",
             "toolkit_id": toolkit_id,
             "request_id": request_id,
-            "payload": json_response,
+            "payload": final_json,
             "auth_token": auth_token if auth_token else None,
             "user_prompt": user_prompt
         })
@@ -592,7 +593,7 @@ class LLMClient:
             raise WebSocketException(f"Failed to send request: {e}")
 
         # Wait for response
-        timeout = 30
+        timeout = 120 # 2 minutes
         start_time = time.time()
         while request_id not in self.response_data:
             if time.time() - start_time > timeout:
@@ -607,14 +608,13 @@ class LLMClient:
         return response
 
 
-def clean_json_string(json_str: str) -> str:
+def clean_json_string(json_str: str):
     """
     Clean a JSON string by removing markdown or extra formatting.
     """
-    # Remove ```json and ``` markers if present
     json_str = json_str.strip()
     if json_str.startswith("```json"):
-        json_str = json_str[len("```json")]
+        json_str = json_str[len("```json"):]
     if json_str.endswith("```"):
         json_str = json_str[:-len("```")]
     return json_str.strip()

@@ -605,7 +605,8 @@ class LLMClient:
             raise ValueError("Invalid response type received from server.")
         
         logger.info(f"Task response received: \n\n{response}")
-        return response
+        tool_response = f"```json\n{response}```"
+        return tool_response
 
 
 def clean_json_string(json_str: str):

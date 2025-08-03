@@ -543,7 +543,7 @@ class LLMClient:
         logger.info(f"Toolkit context retrieved: \n\n{context}")
         return f"{context}"  
 
-    def call_tool(self, toolkit_id: str, json_response: str, auth_token: str=None):
+    def call_tool(self, toolkit_id: str, json_response: str, auth_token: str=None, user_prompt: str=None):
         """
         Execute a tool or workflow on the ChatATP server.
 
@@ -551,6 +551,7 @@ class LLMClient:
             toolkit_id (str): ID of the toolkit to execute.
             json_response (str): JSON string payload from an LLM response.
             auth_token (str, optional): Authentication token for the request.
+            user_prompt (str, optional): User prompt to include in the request.
 
         Returns:
             dict: Response from the server.
@@ -572,7 +573,8 @@ class LLMClient:
             "toolkit_id": toolkit_id,
             "request_id": request_id,
             "payload": json_response,
-            "auth_token": auth_token if auth_token else None
+            "auth_token": auth_token if auth_token else None,
+            "user_prompt": user_prompt
         })
 
         try:

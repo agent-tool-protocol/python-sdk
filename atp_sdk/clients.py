@@ -564,7 +564,8 @@ class LLMClient:
         self._connect()
         request_id = f"task_{toolkit_id}_{str(uuid.uuid4())}"
         try:
-            json.loads(json_response)  # Validate JSON
+            cleaned_json = clean_json_string(json_response)
+            json.loads(cleaned_json)  # Validate JSON
         except json.JSONDecodeError as e:
             raise json.JSONDecodeError(f"Invalid JSON response: {e}", e.doc, e.pos)
 
@@ -603,4 +604,17 @@ class LLMClient:
             raise ValueError("Invalid response type received from server.")
         
         logger.info(f"Task response received: \n\n{response}")
-        return response     
+        return response
+
+
+def clean_json_string(json_str: str) -> str:
+    """
+    Clean a JSON string by removing markdown or extra formatting.
+    """
+    # Remove ```json and ``` markers if present
+    json_str = json_str.strip()
+    if json_str.startswith("```json"):
+        json_str = json_str[len("```json")]
+    if json_str.endswith("```"):
+        json_str = json_str[:-len("```")]
+    return json_str.strip()

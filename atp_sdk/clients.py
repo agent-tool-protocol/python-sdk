@@ -387,7 +387,7 @@ class LLMClient:
         self.authenticated = False  # Track authentication status
         self._connect()
 
-    def _connect(self) -> None:
+    def _connect(self):
         """
         Establish a WebSocket connection with authentication.
         """
@@ -417,7 +417,7 @@ class LLMClient:
                 logger.error(f"Failed to initiate WebSocket connection: {e}")
                 raise WebSocketException(f"Failed to initiate WebSocket connection: {e}")
 
-    def _on_open(self, ws: websocket.WebSocketApp) -> None:
+    def _on_open(self, ws: websocket.WebSocketApp):
         """
         Handle WebSocket connection opening by sending authentication.
 
@@ -432,7 +432,7 @@ class LLMClient:
             logger.error(f"Error during WebSocket authentication: {e}")
             raise WebSocketException(f"Authentication failed: {e}")
 
-    def _on_message(self, ws: websocket.WebSocketApp, message: str) -> None:
+    def _on_message(self, ws: websocket.WebSocketApp, message: str):
         """
         Handle incoming WebSocket messages.
 
@@ -461,7 +461,7 @@ class LLMClient:
         except Exception as e:
             logger.error(f"Error processing WebSocket message: {e}")
 
-    def _on_error(self, ws: websocket.WebSocketApp, error: Exception) -> None:
+    def _on_error(self, ws: websocket.WebSocketApp, error: Exception):
         """
         Handle WebSocket errors.
 
@@ -474,7 +474,7 @@ class LLMClient:
             self.ws = None
             self.authenticated = False
 
-    def _on_close(self, ws: websocket.WebSocketApp, close_status_code: int, close_msg: str) -> None:
+    def _on_close(self, ws: websocket.WebSocketApp, close_status_code: int, close_msg: str):
         """
         Handle WebSocket connection closure.
 
@@ -488,7 +488,7 @@ class LLMClient:
             self.ws = None
             self.authenticated = False
 
-    def get_toolkit_context(self, toolkit_id: str, user_prompt: str) -> str:
+    def get_toolkit_context(self, toolkit_id: str, user_prompt: str):
         """
         Retrieve toolkit context from the ChatATP server and combine with user prompt.
 
@@ -540,9 +540,10 @@ class LLMClient:
             raise ValueError("Invalid response type received from server.")
         
         context = response.get("context", "")
-        return f"{context}"
+        logger.info(f"Toolkit context retrieved: \n\n{context}")
+        return f"{context}"  
 
-    def call_tool(self, toolkit_id: str, json_response: str, auth_token: str=None) -> dict:
+    def call_tool(self, toolkit_id: str, json_response: str, auth_token: str=None):
         """
         Execute a tool or workflow on the ChatATP server.
 
@@ -599,4 +600,5 @@ class LLMClient:
         if not isinstance(response, dict):
             raise ValueError("Invalid response type received from server.")
         
-        return response
+        logger.info(f"Task response received: \n\n{response}")
+        return response     

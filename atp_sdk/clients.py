@@ -543,7 +543,7 @@ class LLMClient:
         logger.info(f"Toolkit context retrieved: \n\n{context}")
         return f"{context}"  
 
-    def call_tool(self, toolkit_id: str, json_response: str, auth_token: str=None, user_prompt: str=None):
+    def call_tool(self, toolkit_id: str, json_response: str, auth_token: str=None, user_prompt: str=None, timeout: int=120):
         """
         Execute a tool or workflow on the ChatATP server.
 
@@ -552,6 +552,7 @@ class LLMClient:
             json_response (str): JSON string payload from an LLM response.
             auth_token (str, optional): Authentication token for the request.
             user_prompt (str, optional): User prompt to include in the request.
+            timeout (int, optional): Timeout for the request in seconds. Default is 120.
 
         Returns:
             dict: Response from the server.
@@ -593,7 +594,7 @@ class LLMClient:
             raise WebSocketException(f"Failed to send request: {e}")
 
         # Wait for response
-        timeout = 120 # 2 minutes
+        timeout = timeout
         start_time = time.time()
         while request_id not in self.response_data:
             if time.time() - start_time > timeout:

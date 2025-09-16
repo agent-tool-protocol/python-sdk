@@ -438,36 +438,94 @@ class ToolKitClient:
         if self.file_watcher:
             self.file_watcher.start()
 
-        def run_ws():
-            if self.base_url.startswith("https://"):
-                ws_url = self.base_url.replace("https://", "wss://")
-            elif self.base_url.startswith("http://"):
-                ws_url = self.base_url.replace("http://", "ws://")
-            url = f"{ws_url}/ws/v1/atp/toolkit-client/{self.api_key}/"
-            while True:
-                try:
-                    logger.info(f"Connecting to: {url}")
-                    self.ws = websocket.WebSocketApp(
-                        url,
-                        on_open=lambda ws: logger.info("WebSocket connection established."),
-                        on_message=self.on_message,
-                        on_error=on_error,
-                        on_close=on_close
-                    )
-                    self.ws.run_forever(ping_interval=30)
-                    logger.warning("WebSocket disconnected. Reconnecting in 5 seconds...")
-                except Exception as e:
-                    logger.exception("Exception in WebSocket thread")
+        if self.protocol.startswith("http"):
+            thread = threading.Thread(target=self._run_http_loop, daemon=True)
+        else:
+            thread = threading.Thread(target=self._run_ws_loop, daemon=True)
 
-                    time.sleep(5)  # delay before trying again
-
-        thread = threading.Thread(target=run_ws)
-        thread.daemon = True
         thread.start()
-
+        self.ws_thread = thread
         self.run_forever()
 
-        logger.info("WebSocket thread started.")
+
+    def _run_ws_loop(self):
+        if self.base_url.startswith("https://"):
+            ws_url = self.base_url.replace("https://", "wss://")
+        elif self.base_url.startswith("http://"):
+            ws_url = self.base_url.replace("http://", "ws://")
+        url = f"{ws_url}/ws/v1/atp/toolkit-client/{self.api_key}/"
+        while True:
+            try:
+                logger.info(f"Connecting to: {url}")
+                self.ws = websocket.WebSocketApp(
+                    url,
+                    on_open=lambda ws: logger.info("WebSocket connection established."),
+                    on_message=self.on_message,
+                    on_error=on_error,
+                    on_close=on_close
+                )
+                self.ws.run_forever(ping_interval=30)
+                logger.warning("WebSocket disconnected. Reconnecting in 5 seconds...")
+            except Exception as e:
+                logger.exception("Exception in WebSocket thread")
+
+                time.sleep(5)  # delay before trying again
+
+    def _run_http_loop(self):
+        """Poll the ATP server for incoming tool requests over HTTP."""
+        url = f"{self.base_url}/api/v1/atp/toolkit-client/{self.api_key}/messages/"
+        logger.info(f"Starting HTTP polling loop: {url}")
+
+        while self.running:
+            try:
+                resp = requests.get(url, timeout=60)  # long-poll up to 60s
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data:
+                        # simulate on_message handling
+                        self._handle_http_message(data)
+                else:
+                    logger.warning(f"Polling failed: {resp.status_code} - {resp.text}")
+                    time.sleep(5)
+            except Exception as e:
+                logger.error(f"HTTP polling error: {e}")
+                time.sleep(5)
+
+    def _handle_http_message(self, data):
+        """Handle a message payload from HTTP polling."""
+        try:
+            message_type = data.get("message_type")
+            if message_type == "atp_tool_request":
+                payload = data["payload"]
+                request_id = payload.get("request_id")
+                tool_name = payload.get("tool_name")
+                params = payload.get("params", {})
+                auth_token = payload.get("auth_token")
+
+                if tool_name in self.registered_tools:
+                    tool_data = self.registered_tools[tool_name]
+                    func = tool_data["function"]
+                    sig = inspect.signature(func)
+
+                    try:
+                        call_params = params.copy()
+                        if auth_token and ("auth_token" in sig.parameters or any(
+                                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())):
+                            call_params["auth_token"] = auth_token
+
+                        result = func(**call_params)
+                        self._report_execution(tool_name, result)
+
+                    except Exception as e:
+                        error_result = {"error": str(e)}
+                        self._report_execution(tool_name, error_result)
+                else:
+                    logger.warning(f"Unknown tool requested: {tool_name}")
+            else:
+                logger.info(f"Unknown HTTP message type: {message_type}")
+        except Exception as e:
+            logger.error(f"Error handling HTTP message: {e}")
+
 
 
     def run_forever(self):

@@ -48,7 +48,8 @@ import requests
 
 client = ToolKitClient(
     api_key="YOUR_ATP_API_KEY",
-    app_name="my_app"
+    app_name="my_app",
+    auto_restart=True  # Enable auto-restart on code changes
 )
 
 @client.register_tool(
@@ -74,7 +75,8 @@ client.start()
 ToolKitClient(
     api_key: str,
     app_name: str,
-    base_url: str = "https://chatatp-backend.onrender.com"
+    base_url: str = "https://chatatp-backend.onrender.com",
+    auto_restart: bool = True
 )
 ```
 
@@ -82,6 +84,7 @@ ToolKitClient(
 - `api_key` (str): Your ATP API key.
 - `app_name` (str): Name of your application.
 - `base_url` (str, optional): ATP Server backend URL. Defaults to chatatp-backend.onrender.com.
+- `auto_restart` (bool, optional): Enable auto-restart on code changes. Defaults to True.
 
 ---
 
@@ -150,6 +153,44 @@ client.start()
 
 - Keeps the main thread alive.
 - Handles reconnections automatically.
+- Starts file watching for auto-restart (if enabled).
+
+---
+
+### Auto-Restart on Code Changes
+
+The ToolKitClient automatically monitors your Python files for changes and restarts when code is modified, similar to Flask and Django development servers.
+
+**Features:**
+- **File Watching**: Monitors all Python files in your project directory
+- **Smart Detection**: Detects code changes using file hashing
+- **Automatic Restart**: Restarts the toolkit client and re-registers all tools
+- **Seamless Recovery**: Maintains tool registration after restart
+
+**Example:**
+```python
+# Enable auto-restart (default behavior)
+client = ToolKitClient(
+    api_key="YOUR_API_KEY",
+    app_name="my_app",
+    auto_restart=True
+)
+
+# Disable auto-restart
+client = ToolKitClient(
+    api_key="YOUR_API_KEY", 
+    app_name="my_app",
+    auto_restart=False
+)
+```
+
+When code changes are detected, you'll see:
+```
+INFO: Code change detected in /path/to/your/file.py. Restarting toolkit client...
+INFO: Re-registering tools after code change...
+INFO: Re-registered 3 tools
+INFO: Toolkit client restarted successfully after code change
+```
 
 ---
 
@@ -272,7 +313,8 @@ The `LLMClient` lets you connect to the ATP Agent Server, retrieve toolkit conte
 from atp_sdk.clients import LLMClient
 
 llm_client = LLMClient(
-    api_key="YOUR_ATP_API_KEY"
+    api_key="YOUR_ATP_API_KEY",
+    ai_provider="openai"  # Options: "openai", "anthropic", "mistral", etc.
 )
 ```
 
@@ -293,20 +335,43 @@ context = llm_client.get_toolkit_context(
 
 ### call_tool
 
-Executes a tool or workflow on the ATP server.
+Executes tools using tool call schemas from LLM providers (OpenAI, Anthropic, etc.).
 
 ```python
+# For OpenAI
 response = llm_client.call_tool(
     toolkit_id="your_toolkit_id",
-    json_response=json.dumps({
-        "function": "hello_world",
-        "parameters": {"name": "Alice"},
-        "task_title": "Say hello",
-        "execution_type": "remote"
-    })
+    tool_calls=openai_response.choices[0].message.tool_calls
 )
-print(response)
+
+# For Anthropic
+response = llm_client.call_tool(
+    toolkit_id="your_toolkit_id", 
+    tool_calls=anthropic_response.content[0].tool_use
+)
+
+# For Mistral
+response = llm_client.call_tool(
+    toolkit_id="your_toolkit_id",
+    tool_calls=mistral_response.choices[0].message.tool_calls
+)
 ```
+
+**Parameters:**
+- `toolkit_id` (str): ID of the toolkit to execute.
+- `tool_calls` (list): List of tool call objects from LLM response.
+- `auth_token` (str, optional): Authentication token for the request.
+- `user_prompt` (str, optional): User prompt to include in the request.
+- `timeout` (int, optional): Timeout for the request in seconds. Default is 120.
+
+**Returns:**
+- `list`: List of tool execution results with tool_call_id and result.
+
+**Supported AI Providers:**
+- **OpenAI**: Automatically converts `tool_calls` format
+- **Anthropic**: Automatically converts `tool_use` format  
+- **Mistral**: Automatically converts `tool_calls` format
+- **Generic**: Supports other providers with flexible conversion
 
 ---
 
@@ -327,31 +392,23 @@ llm_client = LLMClient(api_key="YOUR_ATP_API_KEY")
 context = llm_client.get_toolkit_context(toolkit_id="your_toolkit_id", user_prompt="Create a company and then list contacts.")
 
 # Use OpenAI to generate the workflow JSON
-response = client.completions.create(
+response = client.chat.completions.create(
     model="gpt-4o",
     messages=[
         {"role": "system", "content": context},
         {"role": "user", "content": "Create a company and then list contacts."}
-    ]
+    ],
+    tools=[...],  # Your tool definitions
+    tool_choice="auto"
 )
-workflow_json = response.choices[0].message.content
 
-# Parse and execute each workflow step
-import json
-workflow = json.loads(workflow_json)
-if "workflows" in workflow:
-    results = []
-    for step in workflow["workflows"]:
-        result = llm_client.call_tool(
-            toolkit_id="your_toolkit_id",
-            json_response=json.dumps(step)
-        )
-        results.append(result)
-else:
-    result = llm_client.call_tool(
+# Execute tool calls directly
+if response.choices[0].message.tool_calls:
+    results = llm_client.call_tool(
         toolkit_id="your_toolkit_id",
-        json_response=workflow_json
+        tool_calls=response.choices[0].message.tool_calls
     )
+    print(results)
 ```
 
 ### 2. Anthropic (Claude)
@@ -369,11 +426,18 @@ response = client.messages.create(
     max_tokens=1024,
     messages=[
         {"role": "user", "content": context}
-    ]
+    ],
+    tools=[...],  # Your tool definitions
+    tool_choice="auto"
 )
-workflow_json = response.content[0].text
 
-# Execute as above
+# Execute tool calls directly
+if response.content[0].tool_use:
+    results = llm_client.call_tool(
+        toolkit_id="your_toolkit_id",
+        tool_calls=response.content[0].tool_use
+    )
+    print(results)
 ```
 
 ### 3. Mistral AI
@@ -388,41 +452,52 @@ context = llm_client.get_toolkit_context(toolkit_id="your_toolkit_id", user_prom
 client = MistralClient(api_key="YOUR_MISTRAL_API_KEY")
 response = client.chat(
     model="mistral-large-latest",
-    messages=[{"role": "user", "content": context}]
+    messages=[{"role": "user", "content": context}],
+    tools=[...],  # Your tool definitions
+    tool_choice="auto"
 )
-workflow_json = response.choices[0].message.content
 
-# Execute as above
+# Execute tool calls directly
+if response.choices[0].message.tool_calls:
+    results = llm_client.call_tool(
+        toolkit_id="your_toolkit_id",
+        tool_calls=response.choices[0].message.tool_calls
+    )
+    print(results)
 ```
 
 ---
 
-## Handling Multi-Step Workflows
+## Handling Tool Calls
 
-When the LLM returns a workflow with multiple steps:
+The `call_tool` method automatically handles multiple tool calls from LLM responses:
 
 ```python
-import json
+# OpenAI example
+response = openai.chat.completions.create(
+    model="gpt-4o",
+    messages=[...],
+    tools=[...],
+    tool_choice="auto"
+)
 
-workflow = json.loads(workflow_json)
-if "workflows" in workflow:
-    results = []
-    for step in workflow["workflows"]:
-        result = llm_client.call_tool(
-            toolkit_id="your_toolkit_id",
-            json_response=json.dumps(step)
-        )
-        results.append(result)
-else:
-    result = llm_client.call_tool(
+# Execute all tool calls
+if response.choices[0].message.tool_calls:
+    results = llm_client.call_tool(
         toolkit_id="your_toolkit_id",
-        json_response=workflow_json
+        tool_calls=response.choices[0].message.tool_calls
     )
+    
+    # Results contain tool_call_id and result for each tool
+    for result in results:
+        print(f"Tool {result['tool_call_id']}: {result['result']}")
 ```
 
-- For each step, call `llm_client.call_toolkit` with the step JSON.
-- Collect and process results as needed.
-- If a step has `"depends_on"`, you can pass outputs from previous steps as needed.
+**Features:**
+- **Batch Execution**: Handles multiple tool calls in a single request
+- **Provider Agnostic**: Automatically converts different AI provider formats
+- **Result Tracking**: Each result includes the original tool_call_id
+- **Error Handling**: Individual tool failures don't stop other executions
 
 ---
 
@@ -431,47 +506,57 @@ else:
 ```python
 from atp_sdk.clients import LLMClient
 import openai
-import json
 
-llm_client = LLMClient(api_key="YOUR_ATP_API_KEY")
+llm_client = LLMClient(api_key="YOUR_ATP_API_KEY", ai_provider="openai")
 context = llm_client.get_toolkit_context(toolkit_id="your_toolkit_id", user_prompt="...")
 
-response = openai.ChatCompletion.create(
+response = openai.chat.completions.create(
     model="gpt-4o",
     messages=[
         {"role": "system", "content": context},
         {"role": "user", "content": "Do a multi-step task."}
-    ]
+    ],
+    tools=[...],  # Your tool definitions
+    tool_choice="auto"
 )
-workflow_json = response.choices[0].message.content
-workflow = json.loads(workflow_json)
 
-results = []
-if "workflows" in workflow:
-    for step in workflow["workflows"]:
-        result = llm_client.call_tool(
-            toolkit_id="your_toolkit_id",
-            json_response=json.dumps(step)
-        )
-        results.append(result)
-else:
-    result = llm_client.call_tool(
+# Execute tool calls directly
+if response.choices[0].message.tool_calls:
+    results = llm_client.call_tool(
         toolkit_id="your_toolkit_id",
-        json_response=workflow_json
+        tool_calls=response.choices[0].message.tool_calls
     )
-    results.append(result)
-
-print(results)
+    print(results)
+else:
+    print("No tool calls generated")
 ```
 
 ---
 
 **Tip:**  
-Always ensure the LLM returns valid JSON as described in the toolkit context instructions.
+The LLMClient automatically converts tool call formats from different AI providers. Just pass the tool_calls directly from your LLM response.
 
 ---
 
 ## Advanced Usage
+
+### Auto-Restart Configuration
+
+```python
+# Enable auto-restart with custom file watching
+client = ToolKitClient(
+    api_key="YOUR_API_KEY",
+    app_name="my_app",
+    auto_restart=True
+)
+
+# Disable auto-restart for production
+client = ToolKitClient(
+    api_key="YOUR_API_KEY",
+    app_name="my_app",
+    auto_restart=False
+)
+```
 
 ### Custom Backend
 
@@ -491,6 +576,22 @@ def tool1(**kwargs): ...
 
 @client.register_tool(...)
 def tool2(**kwargs): ...
+```
+
+### AI Provider Integration
+
+```python
+# OpenAI integration
+llm_client = LLMClient(api_key="YOUR_ATP_API_KEY", ai_provider="openai")
+
+# Anthropic integration  
+llm_client = LLMClient(api_key="YOUR_ATP_API_KEY", ai_provider="anthropic")
+
+# Mistral integration
+llm_client = LLMClient(api_key="YOUR_ATP_API_KEY", ai_provider="mistral")
+
+# Custom provider
+llm_client = LLMClient(api_key="YOUR_ATP_API_KEY", ai_provider="custom")
 ```
 
 ---

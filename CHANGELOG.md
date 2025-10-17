@@ -1,100 +1,103 @@
 # Changelog
 
-All notable changes to the Agent Tool Protocol Python SDK will be documented in this file.
+All notable changes to this project will be documented in this file.
 
-## [0.2.0] - 2024-12-19
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## **[0.1.9] - 2025-10-03**
 
 ### Added
-- **Auto-restart functionality** for ToolKitClient similar to Flask/Django development servers
-  - File watching for Python files in project directory
-  - Automatic detection of code changes using file hashing
-  - Seamless restart and tool re-registration
-  - Configurable via `auto_restart` parameter (defaults to True)
-- **Enhanced LLMClient** with AI provider integration
-  - Support for OpenAI, Anthropic, and Mistral tool call formats
-  - Automatic conversion of tool call schemas to ATP format
-  - New `ai_provider` parameter for specifying the AI company
-  - Batch execution of multiple tool calls
-- **FileWatcher class** for monitoring code changes
-  - Real-time file monitoring with configurable check intervals
-  - Efficient change detection using SHA256 hashing
-  - Thread-safe operation with daemon threads
+- **OAuth2 Integration & Token Handling**:  
+  - Introduced `LLMClient.initiate_oauth_connection()` to start OAuth2 flows and generate authorization URLs.  
+  - Added `LLMClient.wait_for_connection()` to poll and retrieve integration IDs after user authorization.  
+  - Added `LLMClient.get_user_tokens()` to securely fetch user access and refresh tokens.  
+  - Tokens are now automatically injected into tool calls, reducing boilerplate for developers.  
+  - Documentation includes usage example for HubSpot, Google, Salesforce, and other third-party tools.
+
+
+
+## **[0.1.7] - 2025-09-21**
+
+### Added
+- **Framework Integrations**:  
+  - **Django**: `django_atp` app for seamless integration.  
+    - Exposes each registered tool at `/atp/<toolkit_name>/<tool_name>/` (GET for metadata, POST for execution).  
+    - Admin-friendly registration via `register_client()`.  
+  - **FastAPI**: `fastapi_atp` registry with example endpoints for instant ATP routing.  
+  - **Flask**: `flask_atp` registry and lightweight endpoints for quick adoption.
+- **ToolKit Client Registration**:  
+  - Introduced `register_client(<name>, <ToolKitClient>)` for explicit toolkit registration.
+  - Eliminates the need to call `ToolKitClient.start()`.
+- **API Marketplace Pattern**: Functions can now be instantly exposed as ATP-compatible HTTP endpoints across frameworks.
+- **Cross-Framework Schema Consistency**: Unified protocol so that ChatATP and other ATP clients can call any registered tool without code changes.
+- **Documentation Upgrade**:  
+  - Added complete integration guides for Django, FastAPI, and Flask.
+  - Included ready-to-copy code samples with curl examples.
 
 ### Changed
-- **ToolKitClient constructor** now accepts `auto_restart` parameter
-- **LLMClient constructor** now requires `ai_provider` parameter
-- **LLMClient.call_tool method** completely redesigned:
-  - Now accepts `tool_calls` list instead of `json_response` string
-  - Returns list of results with tool_call_id tracking
-  - Automatically handles different AI provider formats
-  - No more manual JSON parsing required
-- **Removed emojis** from logging messages for cleaner output
+- **Refactored Startup Flow**: Removed mandatory `.start()` call; registration occurs at import time.
+- **Cleaner Registry APIs**: Standardized `get_client()` lookup across Django, FastAPI, and Flask registries.
+- **Improved Dependency Management**: Added optional extras (`django`, `fastapi`, `flask`) for targeted installs.
 
-### Removed
-- Manual JSON workflow handling in LLMClient
-- `clean_json_string` function (no longer needed)
-- Old `call_tool` method signature
+### Fixed
+- **Endpoint Stability**: Ensured predictable JSON responses for both GET (tool metadata) and POST (execution) calls.
+- **Import Order Issues**: Tools registered in app `ready()` now load reliably at server startup.
 
-### Breaking Changes
-- `LLMClient.call_tool()` method signature changed from `(toolkit_id, json_response, ...)` to `(toolkit_id, tool_calls, ...)`
-- `LLMClient` constructor now requires `ai_provider` parameter
-- Return type of `call_tool()` changed from string to list of result objects
+---
 
-### Migration Guide
-To migrate from v0.1.x to v0.2.0:
-
-1. **Update LLMClient initialization:**
-   ```python
-   # Old
-   llm_client = LLMClient(api_key="YOUR_KEY")
-   
-   # New
-   llm_client = LLMClient(api_key="YOUR_KEY", ai_provider="openai")
-   ```
-
-2. **Update call_tool usage:**
-   ```python
-   # Old
-   result = llm_client.call_tool(
-       toolkit_id="toolkit_id",
-       json_response=json.dumps(workflow)
-   )
-   
-   # New
-   results = llm_client.call_tool(
-       toolkit_id="toolkit_id",
-       tool_calls=openai_response.choices[0].message.tool_calls
-   )
-   ```
-
-3. **Handle new return format:**
-   ```python
-   # Old
-   print(result)  # String response
-   
-   # New
-   for result in results:
-       print(f"Tool {result['tool_call_id']}: {result['result']}")
-   ```
-
-### Examples
-- New `examples/auto_restart_example.py` demonstrating auto-restart functionality
-- New `examples/llm_client_example.py` showing AI provider integration
-- Updated README with comprehensive examples for all supported AI providers
-
-## [0.1.4] - 2024-12-18
+## **[0.1.5] - 2025-08-23**
 
 ### Added
-- Initial release of Agent Tool Protocol Python SDK
-- ToolKitClient for registering and serving Python functions as tools
-- LLMClient for toolkit context retrieval and tool execution
-- WebSocket-based communication with ATP backend
-- Support for OAuth2 authentication flows
-- Tool registration and execution via decorators
+- **Enhanced `pyproject.toml`**: Updated metadata, classifiers, and dependencies for better PyPI compatibility.
+- **Improved Documentation**: Added detailed request/response flow in the README.
+- **Support for Multi-Step Tool Calls**: Clarified how to loop through tool calls from LLMs (OpenAI, Anthropic, Mistral).
 
-### Features
-- Secure tool registration with API key authentication
-- Real-time tool invocation via WebSocket
-- Support for multiple authentication providers
-- Automatic reconnection handling
-- Comprehensive error handling and logging
+### Changed
+- **Version Bump**: Updated to `0.1.5`.
+- **Dependencies**: Specified minimum versions for `requests` and `websocket-client`.
+
+### Fixed
+- **Package Inclusion**: Ensured `atp_sdk` and its submodules are correctly included in the build.
+
+---
+
+## **[0.1.4] - 2025-08-20**
+
+### Added
+- **Initial Release**: First stable version of the Agent Tool Protocol SDK.
+- **Core Features**:
+  - `ToolKitClient` for registering and exposing Python functions as tools.
+  - `LLMClient` for connecting to the ATP Agent Server and executing tools.
+  - Support for WebSocket and HTTP protocols.
+  - OAuth2 and API key authentication.
+- **Examples**: Added usage examples for OpenAI, Anthropic, and Mistral AI.
+
+### Changed
+- **Project Structure**: Organized the project for better maintainability.
+
+---
+
+## **[Unreleased]**
+
+### Planned
+- **Async Support**: Add async/await support for tool execution.
+- **Enhanced Error Handling**: Improve error messages and logging.
+- **Schema Translation**: Support automatic conversion to/from OpenAI, Anthropic, and MCP tool schemas.
+- **CLI Utilities**: Add commands for generating toolkits and scaffolding endpoints.
+
+---
+
+### How to Use This Changelog
+- **Added**: New features.
+- **Changed**: Changes in existing functionality.
+- **Deprecated**: Soon-to-be removed features.
+- **Removed**: Features that have been removed.
+- **Fixed**: Bug fixes.
+- **Security**: Vulnerability fixes.
+
+---
+
+This changelog will be updated with each new release. For more details, check the [GitHub repository](https://github.com/sam-14uel/Agent-Tool-Protocol).

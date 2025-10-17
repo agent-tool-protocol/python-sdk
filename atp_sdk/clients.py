@@ -6,21 +6,16 @@ import threading
 import inspect
 import hashlib
 import uuid
-# import rel
 import requests
-import websocket # websocket client package(websocket-client)
-# import websockets # websocket client and server package(websockets)
-# from websockets.exceptions import ConnectionClosed
+import websocket
 import json
 import logging
 import time
-# import asyncio
 from websocket import WebSocketException, WebSocketConnectionClosedException
 import os
 import hashlib
 from pathlib import Path
-from typing import Dict, Set, Optional, Union
-# websocket.enableTrace(True)
+from typing import Dict, List, Optional, Set
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,34 +31,33 @@ class FileWatcher:
         self.watched_files: Set[str] = set()
         self.running = False
         self.watcher_thread = None
-        
     def add_file(self, file_path: str):
         """Add a file to watch for changes."""
         if os.path.exists(file_path):
             self.watched_files.add(file_path)
             self.file_hashes[file_path] = self._get_file_hash(file_path)
-            
+
     def _get_file_hash(self, file_path: str) -> str:
         """Get the hash of a file's contents."""
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
-                return hashlib.sha256(content.encode('utf-8')).hexdigest()
+                return hashlib.sha256(content.encode("utf-8")).hexdigest()
         except Exception:
             return ""
-            
+
     def start(self):
         """Start the file watcher thread."""
         self.running = True
         self.watcher_thread = threading.Thread(target=self._watch_loop, daemon=True)
         self.watcher_thread.start()
-        
+
     def stop(self):
         """Stop the file watcher."""
         self.running = False
         if self.watcher_thread:
             self.watcher_thread.join()
-            
+
     def _watch_loop(self):
         """Main watching loop that checks for file changes."""
         while self.running:
@@ -71,17 +65,18 @@ class FileWatcher:
                 for file_path in list(self.watched_files):
                     if not os.path.exists(file_path):
                         continue
-                        
+
                     current_hash = self._get_file_hash(file_path)
                     if current_hash != self.file_hashes.get(file_path):
                         logger.info(f"Code change detected in {file_path}")
                         self.file_hashes[file_path] = current_hash
                         self.callback(file_path)
-                        
+
                 time.sleep(1)  # Check every second
             except Exception as e:
                 logger.error(f"Error in file watcher: {e}")
                 time.sleep(5)  # Wait longer on error
+
 
 class ToolKitClient:
     """
@@ -93,7 +88,17 @@ class ToolKitClient:
         base_url (str): Backend server URL.
         registered_tools (dict): Registered tool metadata.
     """
-    def __init__(self, api_key, app_name, base_url="https://chatatp-backend.onrender.com" , auto_restart=True, protocol="wss", idle_timeout=300):
+
+    def __init__(
+        self,
+        api_key,
+        app_name,
+        base_url="https://chatatp-backend.onrender.com",
+        endpoint_url=None,
+        auto_restart=True,
+        protocol="http",
+        idle_timeout=300,
+    ):
         """
         Initialize the ToolKitClient.
 
@@ -101,8 +106,9 @@ class ToolKitClient:
             api_key (str): Your ATP Toolkit API key.
             app_name (str): Name of your application.
             base_url (str, optional): Backend server URL of the ATP Server. Defaults to chatatp-backend.onrender.com.
+            endpoint_url (str, optional): Endpoint URL where the toolkit is deployed and ready to get requests.
             auto_restart (bool, optional): Whether to auto-restart on code changes. Defaults to True.
-            protocol (str, optional): Connection protocol, either "ws" or "https". Defaults to "wss".
+            protocol (str, optional): Connection protocol, either "ws(s)" or "http(s)". Defaults to "https" use wss for development and http for production.
             idle_timeout (int, optional): Idle timeout in seconds before disconnecting. Defaults to 300 seconds (5 minutes).
         """
         self.idle_timeout = idle_timeout  # Default: 300 seconds (5 minutes)
@@ -111,6 +117,7 @@ class ToolKitClient:
         self.api_key = api_key
         self.app_name = app_name
         self.base_url = base_url.rstrip("/")
+        self.endpoint_url = endpoint_url  # <-- Add this
         self.registered_tools = {}
         self.exchange_tokens = {}
         self.lock = threading.Lock()
@@ -122,7 +129,7 @@ class ToolKitClient:
 
         self.loop = None
         self.running = False
-        
+
         # File watching for auto-restart
         if self.auto_restart:
             self.file_watcher = FileWatcher(self._on_code_change)
@@ -134,53 +141,66 @@ class ToolKitClient:
         """Setup file watching for all registered tool files."""
         if not self.file_watcher:
             return
-            
+
         # Get the main script file
         main_file = inspect.stack()[-1].filename
-        if main_file and main_file != '<string>':
+        if main_file and main_file != "<string>":
             self.file_watcher.add_file(main_file)
-            
+
         # Watch current working directory for Python files
         current_dir = Path.cwd()
         for py_file in current_dir.rglob("*.py"):
             if py_file.is_file():
                 self.file_watcher.add_file(str(py_file))
-                
-        logger.info(f"Watching {len(self.file_watcher.watched_files)} Python files for changes")
-        
+
+        logger.info(
+            f"Watching {len(self.file_watcher.watched_files)} Python files for changes"
+        )
+
     def _on_code_change(self, file_path: str):
         """Handle code changes by restarting the toolkit client."""
-        logger.info(f"Code change detected in {file_path}. Restarting toolkit client...")
-        
+        logger.info(
+            f"Code change detected in {file_path}. Restarting toolkit client..."
+        )
+
         # Stop current connection
         self.stop()
-        
+
         # Wait a moment for cleanup
         time.sleep(2)
-        
+
         # Re-register all tools
         self._re_register_tools()
-        
+
         # Restart the client
         self.start()
-        
+
         logger.info("Toolkit client restarted successfully after code change")
-        
+
     def _re_register_tools(self):
         """Re-register all tools after code changes."""
         logger.info("Re-registering tools after code change...")
-        
+
         # Clear existing exchange tokens
         with self.lock:
             self.exchange_tokens.clear()
-            
+
         # Re-register each tool
         for function_name in list(self.registered_tools.keys()):
             self._register_with_server(function_name)
-            
+
         logger.info(f"Re-registered {len(self.registered_tools)} tools")
 
-    def register_tool(self, function_name, params, required_params, description, auth_provider, auth_type, auth_with):
+    def register_tool(
+        self,
+        function_name,
+        params,
+        required_params,
+        description,
+        auth_provider,
+        auth_type,
+        auth_with,
+    ):
         """
         Register a Python function as a remote tool.
 
@@ -196,9 +216,10 @@ class ToolKitClient:
         Returns:
             decorator: A decorator to wrap the tool function.
         """
+
         def decorator(func):
             # Ensure 'access_token' is NOT in user function signature
-            #sig = inspect.signature(func)
+            # sig = inspect.signature(func)
             # if "access_token" in sig.parameters:
             #     raise ValueError(
             #         f"In tool '{function_name}': 'access_token' must not be declared in your function signature.\n"
@@ -220,12 +241,13 @@ class ToolKitClient:
                 "auth_with": auth_with,
                 "source_code": source_code,
                 "code_hash": code_hash,
-                "function_id": function_name
+                "function_id": function_name,
             }
 
             # Register with server
             self._register_with_server(function_name)
             return func
+
         return decorator
 
     def _register_with_server(self, function_name):
@@ -265,14 +287,13 @@ class ToolKitClient:
                 "auth_type": tool_data["auth_type"],
                 "auth_with": tool_data["auth_with"],
                 "sample_response": response,
-                "source_code": source_code  # <-- Include full source code here
-            }
+                "source_code": source_code,  # <-- Include full source code here
+            },
         }
 
         url = f"{self.base_url}/api/v1/register_tool"
         headers = {
             "Content-Type": "application/json",
-            # "Authorization": f"Bearer {self.api_key}"
         }
 
         resp = requests.post(url, json=payload, headers=headers)
@@ -283,7 +304,9 @@ class ToolKitClient:
             logger.info(f" Tool '{function_name}' registered successfully. ✔️")
         else:
             # logger.error(f"Failed to register tool '{function_name}': {resp.status_code} - {resp.text}")
-            logger.info(f"⚠️ Failed to register tool '{function_name}' ❌: {resp.status_code} - {resp.text}")
+            logger.info(
+                f"⚠️ Failed to register tool '{function_name}' ❌: {resp.status_code} - {resp.text}"
+            )
 
     def _generate_sample_params(self, param_defs):
         """
@@ -316,19 +339,20 @@ class ToolKitClient:
             exchange_token = self.exchange_tokens.pop(function_id, None)
 
         if not exchange_token:
-            logger.warning(f"No valid exchange token for '{function_id}'. Skipping report.")
+            logger.warning(
+                f"No valid exchange token for '{function_id}'. Skipping report."
+            )
             return
 
         payload = {
             "exchange_token": exchange_token,
             "result": result,
-            "function_id": function_id
+            "function_id": function_id,
         }
 
         url = f"{self.base_url}/api/v1/execute_function"
         headers = {
             "Content-Type": "application/json",
-            # "Authorization": f"Bearer {self.api_key}"
         }
 
         try:
@@ -336,7 +360,9 @@ class ToolKitClient:
             if resp.status_code == 200:
                 logger.info(f"Execution of '{function_id}' reported successfully.")
             else:
-                logger.error(f"Failed to report execution for '{function_id}': {resp.status_code} - {resp.text}")
+                logger.error(
+                    f"Failed to report execution for '{function_id}': {resp.status_code} - {resp.text}"
+                )
         except Exception as e:
             logger.exception(f"Error reporting execution for '{function_id}': {e}")
 
@@ -360,7 +386,9 @@ class ToolKitClient:
                 tool_name = payload.get("tool_name")
                 params = payload.get("params", {})
                 auth_token = payload.get("auth_token")  # optional, if needed
-                logger.info(f"Received tool request for '{tool_name}' with params: {params}")
+                logger.info(
+                    f"Received tool request for '{tool_name}' with params: {params}"
+                )
 
                 if tool_name in self.registered_tools:
                     tool_data = self.registered_tools[tool_name]
@@ -372,41 +400,65 @@ class ToolKitClient:
                             call_params = params.copy()
                             if "auth_token" in sig.parameters and auth_token:
                                 call_params["auth_token"] = auth_token
-                            elif any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()) and auth_token:
+                            elif (
+                                any(
+                                    p.kind == inspect.Parameter.VAR_KEYWORD
+                                    for p in sig.parameters.values()
+                                )
+                                and auth_token
+                            ):
                                 call_params["auth_token"] = auth_token
                             elif "auth_token" in sig.parameters and not auth_token:
-                                error_result = {"error": f"Function '{tool_name}' requires 'auth_token', but none was provided."}
-                                ws.send(json.dumps({
-                                    "type": "tool_response",
-                                    "request_id": request_id,
-                                    "result": error_result
-                                }))
+                                error_result = {
+                                    "error": f"Function '{tool_name}' requires 'auth_token', but none was provided."
+                                }
+                                ws.send(
+                                    json.dumps(
+                                        {
+                                            "type": "tool_response",
+                                            "request_id": request_id,
+                                            "result": error_result,
+                                        }
+                                    )
+                                )
                             # Call function with auth_token if not in signature
                             result = func(**call_params)
                             # Send response
-                            ws.send(json.dumps({
-                                "type": "tool_response",
-                                "request_id": request_id,
-                                "result": result
-                            }))
+                            ws.send(
+                                json.dumps(
+                                    {
+                                        "type": "tool_response",
+                                        "request_id": request_id,
+                                        "result": result,
+                                    }
+                                )
+                            )
                             # self._report_execution(tool_name, result)
                         else:
                             # Call function without auth_token if not in signature
                             result = func(**params)
                             # Send response
-                            ws.send(json.dumps({
-                                "type": "tool_response",
-                                "request_id": request_id,
-                                "result": result
-                            }))
+                            ws.send(
+                                json.dumps(
+                                    {
+                                        "type": "tool_response",
+                                        "request_id": request_id,
+                                        "result": result,
+                                    }
+                                )
+                            )
                             # self._report_execution(tool_name, result)
                     except Exception as e:
                         error_result = {"error": str(e)}
-                        ws.send(json.dumps({
-                            "type": "tool_response",
-                            "request_id": request_id,
-                            "result": error_result
-                        }))
+                        ws.send(
+                            json.dumps(
+                                {
+                                    "type": "tool_response",
+                                    "request_id": request_id,
+                                    "result": error_result,
+                                }
+                            )
+                        )
                         # self._report_execution(tool_name, error_result)
                 else:
                     logger.info(f"Unknown tool requested: {tool_name}")
@@ -425,6 +477,137 @@ class ToolKitClient:
                 break
             time.sleep(10)  # Check every 10 seconds
 
+    import requests
+
+    def _send_tool_result_http(self, request_id, result):
+        """
+        Send tool execution result to toolkit's endpoint_url.
+        """
+        if not self.endpoint_url:
+            raise ValueError("No endpoint_url configured for HTTP mode.")
+        payload = {"request_id": request_id, "result": result}
+        resp = requests.post(self.endpoint_url, json=payload, timeout=30)
+        resp.raise_for_status()
+        return resp.json()
+
+    def _send_tool_result_inbox(self, request_id, result):
+        """
+        Send tool execution result to ATP server inbox endpoint.
+        """
+        url = f"{self.base_url}/api/v1/toolkit/{self.api_key}/inbox/respond"
+        payload = {"request_id": request_id, "response": result}
+        logger.info(
+            f"Sending result to inbox: request_id={request_id}, result={result}"
+        )
+        try:
+            resp = requests.post(url, json=payload, timeout=30)
+            logger.info(
+                f"Inbox response: status={resp.status_code}, content={resp.text}"
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            logger.error(f"Error sending result to inbox: {e}")
+            raise
+
+    def poll_inbox_for_requests(self):
+        """
+        Poll the ATP server for pending tool requests.
+        """
+        url = f"{self.base_url}/api/v1/toolkit/{self.api_key}/inbox"
+        logger.info(f"Polling inbox at {url}")
+        try:
+            resp = requests.get(url, timeout=30)
+            logger.info(
+                f"Inbox poll response: status={resp.status_code}, content={resp.text}"
+            )
+            if resp.status_code == 200:
+                try:
+                    response_data = resp.json()
+                    if response_data:
+                        logger.info(
+                            f"Received inbox request: {json.dumps(response_data, indent=2)}"
+                        )
+                        return response_data
+                    else:
+                        logger.debug("Inbox is empty")
+                        return None
+                except json.JSONDecodeError as e:
+                    logger.error(
+                        f"Failed to parse inbox response JSON: {e}, response={resp.text}"
+                    )
+                    return None
+            else:
+                logger.warning(
+                    f"Inbox poll failed: status={resp.status_code}, response={resp.text}"
+                )
+                return None
+        except requests.RequestException as e:
+            logger.error(f"Error polling inbox: {e}")
+            return None
+
+    def _poll_inbox_loop(self):
+        """
+        Poll the ATP server for pending tool requests (Inbox Mode).
+        """
+        logger.info("Starting inbox polling loop")
+        while self.running:
+            try:
+                req = self.poll_inbox_for_requests()
+                if req:
+                    request_id = req.get("request_id")
+                    tool_name = req.get("tool_name")
+                    params = req.get("params", {})
+                    auth_token = req.get("auth_token")
+                    logger.info(
+                        f"Processing inbox request: request_id={request_id}, tool_name={tool_name}, params={params}, auth_token={'<hidden>' if auth_token else None}"
+                    )
+
+                    if tool_name in self.registered_tools:
+                        logger.info(f"Found registered tool: {tool_name}")
+                        func = self.registered_tools[tool_name]["function"]
+                        sig = inspect.signature(func)
+                        try:
+                            call_params = params.copy()
+                            if auth_token and (
+                                "auth_token" in sig.parameters
+                                or any(
+                                    p.kind == inspect.Parameter.VAR_KEYWORD
+                                    for p in sig.parameters.values()
+                                )
+                            ):
+                                call_params["auth_token"] = auth_token
+                                logger.debug(
+                                    f"Added auth_token to call parameters for {tool_name}"
+                                )
+                            logger.info(
+                                f"Executing tool {tool_name} with params: {call_params}"
+                            )
+                            result = func(**call_params)
+                            logger.info(
+                                f"Tool {tool_name} executed successfully, result: {result}"
+                            )
+                            self._send_tool_result_inbox(request_id, result)
+                            logger.info(
+                                f"Sent result for request_id={request_id} to inbox"
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Error executing tool {tool_name}: {e}", exc_info=True
+                            )
+                            error_result = {"error": str(e)}
+                            self._send_tool_result_inbox(request_id, error_result)
+                    else:
+                        logger.warning(
+                            f"Tool {tool_name} not found in registered tools"
+                        )
+                else:
+                    logger.debug("No pending requests in inbox")
+                time.sleep(30)  # Poll every 30 seconds
+            except Exception as e:
+                logger.error(f"Inbox polling loop error: {e}", exc_info=True)
+                time.sleep(30)  # Wait 30 seconds after an error
+
     def start(self):
         """
         Start the WebSocket client and listen for tool requests.
@@ -439,14 +622,14 @@ class ToolKitClient:
             self.file_watcher.start()
 
         if self.protocol.startswith("http"):
-            thread = threading.Thread(target=self._run_http_loop, daemon=True)
+            # thread = threading.Thread(target=self._run_http_loop, daemon=True)
+            thread = threading.Thread(target=self._poll_inbox_loop, daemon=True)
         else:
             thread = threading.Thread(target=self._run_ws_loop, daemon=True)
 
         thread.start()
         self.ws_thread = thread
         self.run_forever()
-
 
     def _run_ws_loop(self):
         if self.base_url.startswith("https://"):
@@ -462,7 +645,7 @@ class ToolKitClient:
                     on_open=lambda ws: logger.info("WebSocket connection established."),
                     on_message=self.on_message,
                     on_error=on_error,
-                    on_close=on_close
+                    on_close=on_close,
                 )
                 self.ws.run_forever(ping_interval=30)
                 logger.warning("WebSocket disconnected. Reconnecting in 5 seconds...")
@@ -509,8 +692,13 @@ class ToolKitClient:
 
                     try:
                         call_params = params.copy()
-                        if auth_token and ("auth_token" in sig.parameters or any(
-                                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())):
+                        if auth_token and (
+                            "auth_token" in sig.parameters
+                            or any(
+                                p.kind == inspect.Parameter.VAR_KEYWORD
+                                for p in sig.parameters.values()
+                            )
+                        ):
                             call_params["auth_token"] = auth_token
 
                         result = func(**call_params)
@@ -526,8 +714,6 @@ class ToolKitClient:
         except Exception as e:
             logger.error(f"Error handling HTTP message: {e}")
 
-
-
     def run_forever(self):
         """
         Keep the main thread alive until stopped.
@@ -538,13 +724,12 @@ class ToolKitClient:
         except KeyboardInterrupt:
             self.stop()
 
-
     def stop(self):
         """
         Stop the WebSocket client and close the connection.
         """
         self.running = False
-        
+
         # Stop file watcher
         if self.file_watcher:
             self.file_watcher.stop()
@@ -559,6 +744,7 @@ class ToolKitClient:
 def on_error(ws, error):
     logger.exception(f"WebSocket error: {error}")
 
+
 def on_close(ws, code, reason):
     logger.error(f"WebSocket closed with code {code} and reason: {reason}")
 
@@ -566,44 +752,58 @@ def on_close(ws, code, reason):
 class WebSocketException(Exception):
     pass
 
+
 class HTTPException(Exception):
     pass
 
+
 class LLMClient:
     """
-    LLMClient manages both WebSocket and HTTP/HTTPS connections to the ChatATP Agent Server
-    for toolkit context retrieval and tool execution.
+    LLMClient manages connections to the ATP Agent Server for toolkit context retrieval
+    and remote tool execution. Supports both WebSocket and HTTP protocols.
+
+    This client is designed to work seamlessly with popular LLM providers like OpenAI,
+    Anthropic, and Mistral by handling tool call formatting automatically.
     """
+
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://chatatp-backend.onrender.com/ws/v1/atp/llm-client/",
-        protocol: str = "ws",
+        protocol: str = "https",
+        base_url: str = "https://chatatp-backend.onrender.com",
         idle_timeout: int = 300,
     ):
         """
         Initialize the LLMClient.
+
         Args:
-            api_key (str): ChatATP API key for authentication.
-            base_url (str, optional): ATP server URL. Defaults to "https://chatatp-backend.onrender.com/ws/v1/atp/llm-client/".
-            protocol (str, optional): Protocol to use ("ws" or "http"). Defaults to "ws".
-            idle_timeout (int, optional): Idle timeout in seconds. Defaults to 300.
+            api_key (str): ATP API key for authentication.
+            protocol (str): Connection protocol. Options: "ws", "wss", "http", "https".
+                          Defaults to "https".
+            base_url (str): Server URL. Defaults to "https://chatatp-backend.onrender.com".
+            idle_timeout (int): Idle timeout in seconds. Defaults to 300.
         """
+        self.api_key = api_key
+        self.protocol = protocol.lower()
+        self.base_url = base_url.rstrip("/")
         self.idle_timeout = idle_timeout
         self.last_activity_time = time.time()
-        self.protocol = protocol.lower()
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
+
+        # Connection management
         self.ws = None
         self.lock = threading.Lock()
         self.response_data = {}
         self.authenticated = False
+
+        # Initialize based on protocol
         if self.protocol in ["ws", "wss"]:
             self._init_websocket()
         elif self.protocol in ["http", "https"]:
             self._init_http()
         else:
-            raise ValueError("Unsupported protocol. Use 'ws' or 'http'.")
+            raise ValueError(
+                "Unsupported protocol. Use 'ws', 'wss', 'http', or 'https'."
+            )
 
     def _init_websocket(self):
         """Initialize WebSocket-specific attributes."""
@@ -613,7 +813,7 @@ class LLMClient:
             ws_url = self.base_url.replace("http://", "ws://")
         else:
             raise ValueError("Invalid base URL for WebSocket.")
-        self.ws_url = f"{ws_url}/{self.api_key}/"
+        self.ws_url = f"{ws_url}/ws/v1/atp/llm-client/{self.api_key}/"
         self._connect()
 
     def _init_http(self):
@@ -623,7 +823,12 @@ class LLMClient:
     def _connect(self):
         """Establish a WebSocket connection with authentication."""
         with self.lock:
-            if self.ws and self.ws.sock and self.ws.sock.connected and self.authenticated:
+            if (
+                self.ws
+                and self.ws.sock
+                and self.ws.sock.connected
+                and self.authenticated
+            ):
                 return
             try:
                 self.ws = websocket.WebSocketApp(
@@ -633,7 +838,9 @@ class LLMClient:
                     on_error=self._on_error,
                     on_close=self._on_close,
                 )
-                ws_thread = threading.Thread(target=self.ws.run_forever, kwargs={"ping_interval": 30})
+                ws_thread = threading.Thread(
+                    target=self.ws.run_forever, kwargs={"ping_interval": 30}
+                )
                 ws_thread.daemon = True
                 ws_thread.start()
                 # Wait for authentication
@@ -643,17 +850,19 @@ class LLMClient:
                 if not self.authenticated:
                     raise WebSocketException("Authentication timed out.")
             except Exception as e:
-                print(f"Failed to initiate WebSocket connection: {e}")
-                raise WebSocketException(f"Failed to initiate WebSocket connection: {e}")
+                logger.error(f"Failed to initiate WebSocket connection: {e}")
+                raise WebSocketException(
+                    f"Failed to initiate WebSocket connection: {e}"
+                )
 
     def _on_open(self, ws: websocket.WebSocketApp):
         """Handle WebSocket connection opening by sending authentication."""
         try:
             auth_message = json.dumps({"type": "auth", "api_key": self.api_key})
             ws.send(auth_message)
-            print("WebSocket connection established and authentication sent.")
+            logger.info("WebSocket connection established and authentication sent.")
         except Exception as e:
-            print(f"Error during WebSocket authentication: {e}")
+            logger.error(f"Error during WebSocket authentication: {e}")
             raise WebSocketException(f"Authentication failed: {e}")
 
     def _on_message(self, ws: websocket.WebSocketApp, message: str):
@@ -665,90 +874,235 @@ class LLMClient:
             request_id = data.get("request_id")
             if message_type == "auth_response":
                 if not data.get("success"):
-                    print(f"Authentication failed: {data.get('error', 'Unknown error')}")
+                    logger.error(
+                        f"Authentication failed: {data.get('error', 'Unknown error')}"
+                    )
                     ws.close()
                 else:
-                    print("Authentication successful.")
+                    logger.info("Authentication successful.")
                     self.authenticated = True
             elif message_type in ["toolkit_context", "task_response"]:
-                self.response_data[request_id] = data.get("payload", {})
+                self.response_data[request_id] = data
             else:
-                print(f"Received unknown message type: {message_type}")
+                logger.warning(f"Received unknown message type: {message_type}")
         except json.JSONDecodeError:
-            print("Failed to parse WebSocket message as JSON.")
+            logger.error("Failed to parse WebSocket message as JSON.")
         except Exception as e:
-            print(f"Error processing WebSocket message: {e}")
+            logger.error(f"Error processing WebSocket message: {e}")
 
     def _on_error(self, ws: websocket.WebSocketApp, error: Exception):
         """Handle WebSocket errors."""
-        print(f"WebSocket error: {error}, type: {type(error).__name__}")
+        logger.error(f"WebSocket error: {error}, type: {type(error).__name__}")
         with self.lock:
             self.ws = None
             self.authenticated = False
 
-    def _on_close(self, ws: websocket.WebSocketApp, close_status_code: int, close_msg: str):
+    def _on_close(
+        self, ws: websocket.WebSocketApp, close_status_code: int, close_msg: str
+    ):
         """Handle WebSocket connection closure."""
-        print(f"WebSocket closed with code {close_status_code}: {close_msg}")
+        logger.info(f"WebSocket closed with code {close_status_code}: {close_msg}")
         with self.lock:
             self.ws = None
             self.authenticated = False
 
-    def _http_request(self, endpoint: str, payload: dict, method: str = "POST", stream: bool = False):
+    def _http_request(
+        self, endpoint: str, payload: dict, method: str = "POST", stream: bool = False
+    ):
         """Make an HTTP request to the server."""
-        url = f"https://chatatp-backend.onrender.com/api/v1/atp/llm-client/process/"
-        # headers = {"Content-Type": "application/json", "Authorization": f"Token 1181c154c457df418d48fc01f56d19771b95b620"}
-        # if not stream:
-        # resp = requests.post(url, json=payload, headers=headers)
-        resp = requests.post(url, json=payload)
-        resp.raise_for_status()
-        return resp.json()
+        url = f"{self.http_url}{endpoint}"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json" if not stream else "text/event-stream",
+        }
+        try:
+            if stream:
+                return requests.post(url, json=payload, headers=headers, stream=True) if method == "POST" else requests.get(url, headers=headers, stream=True)
+            resp = requests.post(url, json=payload, headers=headers) if method == "POST" else requests.get(url, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            logger.error(f"HTTP request failed: {e}")
+            raise
 
-    def get_toolkit_context(self, toolkit_id: str, provider: str, user_prompt: str) -> dict:
+    def initiate_oauth_connection(self, platform_id: str, external_user_id: str, developer_redirect_url: Optional[str] = None) -> Dict:
+        """
+        Initiate an OAuth connection for a third-party provider.
+
+        Args:
+            platform_id (str): The platform_id of the DeveloperIntegrationPlatform.
+            external_user_id (str): Unique identifier for the user in the developer's system.
+            developer_redirect_url (str, optional): URL to redirect to after OAuth completion.
+
+        Returns:
+            dict: Metadata including confirmation_url, provider_name, provider_logo, developer_app_name,
+                  scopes, auth_mode, powered_by, and authorization_url.
+        """
+        endpoint = f"oauth/confirmation/{platform_id}/"
+        payload = {
+            "external_user_id": external_user_id,
+            "developer_redirect_url": developer_redirect_url
+        } if developer_redirect_url else {"external_user_id": external_user_id}
+        
+        try:
+            response = self._http_request(endpoint, payload, method="POST")
+            return response
+        except requests.RequestException as e:
+            logger.error(f"Failed to initiate OAuth connection: {e}")
+            raise Exception(f"Failed to initiate OAuth connection: {e}")
+
+    def wait_for_connection(self, platform_id: str, external_user_id: str, timeout: int = 300, poll_interval: int = 2) -> Dict:
+        """
+        Poll for a successful OAuth connection.
+
+        Args:
+            platform_id (str): The platform_id of the DeveloperIntegrationPlatform.
+            external_user_id (str): Unique identifier for the user in the developer's system.
+            timeout (int): Maximum time to wait in seconds. Default is 300.
+            poll_interval (int): Seconds between polling attempts. Default is 2.
+
+        Returns:
+            dict: Details of the connected account (integration_id, external_user_id, etc.).
+
+        Raises:
+            TimeoutError: If the connection is not established within the timeout period.
+            Exception: If an error occurs while polling.
+        """
+        start_time = time.time()
+        endpoint = f"oauth/tokens/{platform_id}/{external_user_id}/"
+        
+        while time.time() - start_time < timeout:
+            try:
+                response = self._http_request(endpoint, {}, method="GET")
+                return {
+                    "status": "completed",
+                    "integration_id": response.get("integration_id"),
+                    "external_user_id": response.get("external_user_id"),
+                    "external_user_email": response.get("external_user_email"),
+                    "access_token": response.get("access_token"),
+                    "refresh_token": response.get("refresh_token"),
+                    "expires_at": response.get("expires_at"),
+                    "scope": response.get("scope")
+                }
+            except requests.RequestException as e:
+                if isinstance(e, requests.HTTPError) and e.response.status_code == 404:
+                    # Account not yet connected, continue polling
+                    time.sleep(poll_interval)
+                    continue
+                logger.error(f"Error polling for connection: {e}")
+                raise Exception(f"Error polling for connection: {e}")
+        
+        raise TimeoutError(f"Timed out waiting for OAuth connection for platform {platform_id} and user {external_user_id}")
+
+    def get_user_tokens(self, platform_id: str, external_user_id: str) -> Dict:
+        """
+        Retrieve OAuth tokens for a connected user.
+
+        Args:
+            platform_id (str): The platform_id of the DeveloperIntegrationPlatform.
+            external_user_id (str): Unique identifier for the user in the developer's system.
+
+        Returns:
+            dict: Token details including access_token, refresh_token, expires_at, and scope.
+        """
+        endpoint = f"oauth/tokens/{platform_id}/{external_user_id}/"
+        try:
+            return self._http_request(endpoint, {}, method="GET")
+        except requests.RequestException as e:
+            logger.error(f"Failed to fetch user tokens: {e}")
+            raise Exception(f"Failed to fetch user tokens: {e}")
+
+    def register_webhook(self, url: str, events: List[str] = ['connection_success']) -> Dict:
+        """
+        Register a webhook for OAuth connection events.
+
+        Args:
+            url (str): The webhook URL to receive events.
+            events (List[str]): List of event types (e.g., ['connection_success', 'connection_failed']).
+
+        Returns:
+            dict: Webhook details including webhook_id, url, and events.
+        """
+        endpoint = "webhooks/register/"
+        payload = {"url": url, "events": events}
+        try:
+            return self._http_request(endpoint, payload, method="POST")
+        except requests.RequestException as e:
+            logger.error(f"Failed to register webhook: {e}")
+            raise Exception(f"Failed to register webhook: {e}")
+
+    def list_webhooks(self) -> List[Dict]:
+        """
+        List all registered webhooks.
+
+        Returns:
+            List[dict]: List of webhook details.
+        """
+        endpoint = "webhooks/"
+        try:
+            return self._http_request(endpoint, {}, method="GET")
+        except requests.RequestException as e:
+            logger.error(f"Failed to list webhooks: {e}")
+            raise Exception(f"Failed to list webhooks: {e}")
+
+    def delete_webhook(self, webhook_id: str) -> None:
+        """
+        Delete a registered webhook.
+
+        Args:
+            webhook_id (str): The ID of the webhook to delete.
+        """
+        endpoint = f"webhooks/{webhook_id}/delete/"
+        try:
+            self._http_request(endpoint, {}, method="DELETE")
+        except requests.RequestException as e:
+            logger.error(f"Failed to delete webhook: {e}")
+            raise Exception(f"Failed to delete webhook: {e}")
+
+    def get_toolkit_context(
+        self, toolkit_id: str, user_prompt: str, provider: str = "openai"
+    ) -> dict:
         """
         Retrieve the execution context for a toolkit from the server.
 
-        The context combines provider-specific schema details (e.g., OpenAI, Anthropic) 
-        with the given user prompt, ensuring the request aligns with the provider’s 
-        tool/function call format. The request is routed via WebSocket or HTTP depending 
-        on the client protocol.
-
         Args:
             toolkit_id (str): Unique ID/name of the toolkit to retrieve context for.
-            provider (str): The LLM provider whose tool/function call schema should be used e.g., "openai", "anthropic", "mistral".
-            user_prompt (str): The user’s input to append to the toolkit context.
+            user_prompt (str): The user's input to append to the toolkit context.
+            provider (str): The LLM provider. Options: "openai", "anthropic", "mistralai", "mistral".
 
         Returns:
-            str: Combined toolkit context ready for provider-compatible execution.
-
-        Raises:
-            WebSocketException: If the connection fails or authentication is invalid.
-            ValueError: If the server returns an invalid response.
+            dict: Toolkit context containing tools and system instructions.
         """
         if self.protocol in ["ws", "wss"]:
-            return self._get_toolkit_context_ws(toolkit_id, provider, user_prompt)
+            return self._get_toolkit_context_ws(toolkit_id, user_prompt, provider)
         elif self.protocol in ["http", "https"]:
-            return self._get_toolkit_context_http(toolkit_id, provider, user_prompt)
+            return self._get_toolkit_context_http(toolkit_id, user_prompt, provider)
 
-    def _get_toolkit_context_ws(self, toolkit_id: str, provider: str, user_prompt: str) -> dict:
+    def _get_toolkit_context_ws(
+        self, toolkit_id: str, user_prompt: str, provider: str
+    ) -> dict:
         """Retrieve toolkit context using WebSocket."""
         self._connect()
         if not self.authenticated:
             raise WebSocketException("WebSocket not authenticated.")
         request_id = f"context_{toolkit_id}_{str(uuid.uuid4())}"
-        message = json.dumps({
-            "type": "get_toolkit_context",
-            "toolkit_id": toolkit_id,
-            "request_id": request_id,
-            "provider": provider,
-            "user_prompt": user_prompt,
-        })
+        message = json.dumps(
+            {
+                "type": "get_toolkit_context",
+                "toolkit_id": toolkit_id,
+                "request_id": request_id,
+                "provider": provider,
+                "user_prompt": user_prompt,
+            }
+        )
         try:
             with self.lock:
                 if not self.ws or not self.ws.sock or not self.ws.sock.connected:
                     raise WebSocketException("WebSocket connection is closed.")
                 self.ws.send(message)
         except Exception as e:
-            print(f"Error sending get_toolkit_context message: {e}")
+            logger.error(f"Error sending get_toolkit_context message: {e}")
             raise WebSocketException(f"Failed to send request: {e}")
         # Wait for response
         timeout = 30
@@ -757,9 +1111,11 @@ class LLMClient:
             if time.time() - start_time > timeout:
                 raise TimeoutError("Timed out waiting for toolkit context response.")
             time.sleep(0.1)
-        return self.response_data.pop(request_id)
+        return self.response_data.pop(request_id).get("payload", {})
 
-    def _get_toolkit_context_http(self, toolkit_id: str, provider: str, user_prompt: str) -> dict:
+    def _get_toolkit_context_http(
+        self, toolkit_id: str, user_prompt: str, provider: str
+    ) -> dict:
         """Retrieve toolkit context using HTTP."""
         payload = {
             "type": "get_toolkit_context",
@@ -768,95 +1124,393 @@ class LLMClient:
             "provider": provider,
             "user_prompt": user_prompt,
         }
-        response = self._http_request("process", payload, stream=False)
+        response = self._http_request("process/", payload, stream=False)
         return response.get("payload", {})
 
-    def call_tool(self, toolkit_id: str, json_response: str, provider: str = None, auth_token: str = None, user_prompt: str = None, timeout: int = 120) -> Union[str, dict]:
+    def get_toolkit_context_streaming(
+        self, toolkit_id: str, user_prompt: str, provider: str = "openai"
+    ):
         """
-        Execute a tool or workflow on the server.
-
-        Accepts a JSON-formatted tool call response from an LLM and dispatches it 
-        to the appropriate toolkit. Since each provider may define its own schema 
-        for tool/function calls, the provider parameter ensures correct interpretation.
-        The request is executed via WebSocket or HTTP depending on the client protocol.
+        Retrieve toolkit context with streaming support (HTTP only).
 
         Args:
-            toolkit_id (str): Unique ID/name/identifier of the toolkit instance to execute.
-            json_response (str): JSON payload from an LLM containing the tool call.
-            provider (str, optional): The LLM provider (e.g., OpenAI, Anthropic) whose 
-                tool/function call schema the json_response follows.
-            auth_token (str, optional): Authentication token for the request.
-            user_prompt (str, optional): Additional user input to include in the execution.
-            timeout (int, optional): Timeout in seconds. Default is 120.
+            toolkit_id (str): Unique ID/name of the toolkit.
+            user_prompt (str): The user's input.
+            provider (str): The LLM provider.
 
-        Returns:
-            Union[str, dict]: The server’s response, either raw or structured.
-
-        Raises:
-            WebSocketException: If the connection fails or authentication is invalid.
-            ValueError: If the server returns an invalid response type.
-            json.JSONDecodeError: If the provided json_response is malformed.
+        Yields:
+            dict: Streamed toolkit context events.
         """
-        if self.protocol in ["ws", "wss"]:
-            return self._call_tool_ws(toolkit_id, json_response, provider, auth_token, user_prompt, timeout)
-        elif self.protocol in ["http", "https"]:
-            return self._call_tool_http(toolkit_id, json_response, provider, auth_token, user_prompt, timeout)
-
-    def _call_tool_ws(self, toolkit_id: str, json_response: str, provider: str, auth_token: str, user_prompt: str, timeout: int) -> dict:
-        """Execute a tool using WebSocket."""
-        self._connect()
-        request_id = f"task_{toolkit_id}_{str(uuid.uuid4())}"
-        try:
-            cleaned_json = self._clean_json_string(json_response)
-            final_json = json.loads(cleaned_json)
-        except json.JSONDecodeError as e:
-            raise json.JSONDecodeError(f"Invalid JSON response: {e}", e.doc, e.pos)
-        message = json.dumps({
-            "type": "task_request",
-            "toolkit_id": toolkit_id,
-            "request_id": request_id,
-            "payload": final_json,
-            "provider": provider,
-            "auth_token": auth_token,
-            "user_prompt": user_prompt,
-        })
-        try:
-            with self.lock:
-                if not self.ws or not self.ws.sock or not self.ws.sock.connected:
-                    raise WebSocketException("WebSocket connection is closed.")
-                self.ws.send(message)
-        except Exception as e:
-            print(f"Error sending task_request message: {e}")
-            raise WebSocketException(f"Failed to send request: {e}")
-        # Wait for response
-        start_time = time.time()
-        while request_id not in self.response_data:
-            if time.time() - start_time > timeout:
-                raise TimeoutError("Timed out waiting for task response.")
-            time.sleep(0.1)
-        return self.response_data.pop(request_id)
-
-    def _call_tool_http(self, toolkit_id: str, json_response: str, provider: str, auth_token: str, user_prompt: str, timeout: int) -> dict:
-        """Execute a tool using HTTP."""
+        if self.protocol not in ["http", "https"]:
+            raise ValueError("Streaming only supported for HTTP protocol")
         payload = {
-            "type": "task_request",
+            "type": "get_toolkit_context",
             "toolkit_id": toolkit_id,
             "request_id": str(uuid.uuid4()),
-            "payload": json.loads(self._clean_json_string(json_response)),
             "provider": provider,
-            "auth_token": auth_token,
             "user_prompt": user_prompt,
         }
-        return self._http_request("process", payload)
+        return self._http_stream_request("process/", payload, timeout=30)
 
-    @staticmethod
-    def _clean_json_string(json_str: str) -> str:
+    def call_tool(
+        self,
+        toolkit_id: str,
+        tool_calls: list,
+        provider: str = "openai",
+        auth_token: str = None,
+        user_prompt: str = None,
+        timeout: int = 120,
+        sequential: bool = False,
+    ) -> list:
         """
-        Clean a JSON string by removing markdown or extra formatting.
+        Execute tool calls from LLM providers on the server.
+
+        Args:
+            toolkit_id (str): Unique ID of the toolkit instance.
+            tool_calls (list): List of raw tool call objects from LLM response.
+            provider (str): LLM provider ("openai", "anthropic", "mistralai", "mistral").
+            auth_token (str, optional): Authentication token for the request.
+            user_prompt (str, optional): Additional user input.
+            timeout (int, optional): Timeout in seconds. Default is 120.
+            sequential (bool, optional): Execute tool calls sequentially if True. Default is False.
+
+        Returns:
+            list: List of tool execution results with tool_call_id and result.
         """
-        json_str = json_str.strip()
-        if json_str.startswith("```json"):
-            json_str = json_str[len("```json"):]
-        if json_str.endswith("```"):
-            json_str = json_str[:-len("```")]
-        return json_str.strip()
+        if not tool_calls:
+            logger.warning("No tool calls provided")
+            return []
+
+        # Format tool calls for the backend
+        formatted_calls = self._format_tool_calls(tool_calls, provider)
+
+        if sequential:
+            return self._call_tool_sequential(
+                toolkit_id, formatted_calls, provider, auth_token, user_prompt, timeout
+            )
+        else:
+            if self.protocol in ["ws", "wss"]:
+                return self._call_tool_ws(
+                    toolkit_id,
+                    formatted_calls,
+                    provider,
+                    auth_token,
+                    user_prompt,
+                    timeout,
+                )
+            elif self.protocol in ["http", "https"]:
+                return self._call_tool_http(
+                    toolkit_id,
+                    formatted_calls,
+                    provider,
+                    auth_token,
+                    user_prompt,
+                    timeout,
+                )
+
+    def _format_tool_calls(self, tool_calls: list, provider: str) -> list:
+        """
+        Format tool calls from different providers to the required backend format.
+
+        Args:
+            tool_calls (list): Raw tool calls from LLM provider.
+            provider (str): Provider name.
+
+        Returns:
+            list: Formatted tool calls in backend-required format.
+        """
+        formatted_calls = []
+
+        for tool_call in tool_calls:
+            try:
+                if provider == "openai":
+                    # OpenAI: {id, type, function: {name, arguments}}
+                    call_id = tool_call.id if hasattr(tool_call, "id") else f"call_{str(uuid.uuid4())}"
+                    function_name = (
+                        tool_call.function.name
+                        if hasattr(tool_call, "function")
+                        else tool_call.get("function", {}).get("name", "")
+                    )
+                    arguments = (
+                        json.loads(tool_call.function.arguments)
+                        if hasattr(tool_call, "function") and isinstance(tool_call.function.arguments, str)
+                        else tool_call.function.arguments
+                        if hasattr(tool_call, "function")
+                        else tool_call.get("function", {}).get("arguments", {})
+                    )
+
+                elif provider == "anthropic":
+                    # Anthropic: {id, type, name, input}
+                    call_id = tool_call.id if hasattr(tool_call, "id") else tool_call.get("id", f"call_{str(uuid.uuid4())}")
+                    function_name = (
+                        tool_call.name
+                        if hasattr(tool_call, "name")
+                        else tool_call.get("name", "")
+                    )
+                    arguments = (
+                        tool_call.input
+                        if hasattr(tool_call, "input")
+                        else tool_call.get("input", {})
+                    )
+
+                elif provider in ["mistralai", "mistral"]:
+                    # Mistral: {id, type, function: {name, arguments}}
+                    call_id = tool_call.id if hasattr(tool_call, "id") else tool_call.get("id", f"call_{str(uuid.uuid4())}")
+                    function_name = (
+                        tool_call.function.name
+                        if hasattr(tool_call, "function")
+                        else tool_call.get("name", "")
+                    )
+                    arguments = (
+                        json.loads(tool_call.function.arguments)
+                        if hasattr(tool_call, "function") and isinstance(tool_call.function.arguments, str)
+                        else tool_call.function.arguments
+                        if hasattr(tool_call, "function")
+                        else tool_call.get("arguments", {})
+                    )
+
+                else:
+                    raise ValueError(f"Unsupported provider: {provider}")
+
+                # Ensure arguments is a dict
+                if not isinstance(arguments, dict):
+                    logger.warning(f"Invalid arguments format for tool call {call_id}: {arguments}")
+                    arguments = {}
+
+                formatted_calls.append({
+                    "function": function_name,
+                    "parameters": arguments,
+                    "auth_token": None  # Set in _call_tool methods if provided
+                })
+
+            except Exception as e:
+                logger.error(f"Error formatting tool call: {e}")
+                formatted_calls.append({
+                    "function": "unknown",
+                    "parameters": {},
+                    "auth_token": None,
+                    "error": str(e)
+                })
+
+        return formatted_calls
+
+    def _call_tool_sequential(
+        self,
+        toolkit_id: str,
+        formatted_calls: list,
+        provider: str,
+        auth_token: str,
+        user_prompt: str,
+        timeout: int,
+    ) -> list:
+        """Execute tool calls one by one sequentially."""
+        results = []
+
+        for i, tool_call in enumerate(formatted_calls):
+            logger.info(f"Executing tool call {i+1}/{len(formatted_calls)}: {tool_call.get('function', 'unknown')}")
+            try:
+                if self.protocol in ["ws", "wss"]:
+                    result = self._call_tool_ws(
+                        toolkit_id, [tool_call], provider, auth_token, user_prompt, timeout
+                    )
+                elif self.protocol in ["http", "https"]:
+                    result = self._call_tool_http(
+                        toolkit_id, [tool_call], provider, auth_token, user_prompt, timeout
+                    )
+
+                if result and isinstance(result, list):
+                    results.extend(result)
+                    logger.info(f"Tool call {i+1} completed successfully")
+                else:
+                    results.append({
+                        "tool_call_id": f"call_{i}",
+                        "result": {"error": "No result returned"}
+                    })
+
+            except Exception as e:
+                logger.error(f"Error executing tool call {i+1}: {e}")
+                results.append({
+                    "tool_call_id": f"call_{i}",
+                    "result": {"error": str(e)}
+                })
+
+        return results
+
+    def _call_tool_ws(
+        self,
+        toolkit_id: str,
+        formatted_calls: list,
+        provider: str,
+        auth_token: str,
+        user_prompt: str,
+        timeout: int,
+    ) -> list:
+        """Execute tool calls using WebSocket."""
+        self._connect()
+        if not self.authenticated:
+            raise WebSocketException("WebSocket not authenticated.")
+
+        results = []
+
+        for i, tool_call in enumerate(formatted_calls):
+            request_id = f"task_{toolkit_id}_{i}_{str(uuid.uuid4())}"
+            payload = {
+                "type": "task_request",
+                "request_id": request_id,
+                "toolkit_id": toolkit_id,
+                "auth_token": auth_token,
+                "user_prompt": user_prompt,
+                "payload": {
+                    "function": tool_call["function"],
+                    "parameters": tool_call["parameters"],
+                    "auth_token": tool_call.get("auth_token") or auth_token
+                }
+            }
+
+            try:
+                with self.lock:
+                    if not self.ws or not self.ws.sock or not self.ws.sock.connected:
+                        raise WebSocketException("WebSocket connection is closed.")
+                    self.ws.send(json.dumps(payload))
+            except Exception as e:
+                logger.error(f"Error sending task_request message: {e}")
+                raise WebSocketException(f"Failed to send request: {e}")
+
+            # Wait for response
+            start_time = time.time()
+            while request_id not in self.response_data:
+                if time.time() - start_time > timeout:
+                    raise TimeoutError(f"Timed out waiting for task response {i+1}.")
+                time.sleep(0.1)
+
+            response = self.response_data.pop(request_id)
+            if response.get("status") == "error":
+                logger.error(f"Task response error: {response.get('message')}")
+                results.append({
+                    "tool_call_id": f"call_{i}",
+                    "result": {"error": response.get("message", "Unknown error")}
+                })
+            else:
+                results.append({
+                    "tool_call_id": f"call_{i}",
+                    "result": response.get("result", "")
+                })
+
+        return results
+
+    def _call_tool_http(
+        self,
+        toolkit_id: str,
+        formatted_calls: list,
+        provider: str,
+        auth_token: str,
+        user_prompt: str,
+        timeout: int,
+    ) -> list:
+        """Execute tool calls using HTTP."""
+        results = []
+
+        for i, tool_call in enumerate(formatted_calls):
+            request_id = f"task_{toolkit_id}_{i}_{str(uuid.uuid4())}"
+            payload = {
+                "type": "task_request",
+                "request_id": request_id,
+                "toolkit_id": toolkit_id,
+                "auth_token": auth_token,
+                "user_prompt": user_prompt,
+                "payload": {
+                    "function": tool_call["function"],
+                    "parameters": tool_call["parameters"],
+                    "auth_token": tool_call.get("auth_token") or auth_token
+                }
+            }
+
+            try:
+                response = self._http_request("process/", payload, stream=False)
+                if response.get("status") == "error":
+                    logger.error(f"Task response error: {response.get('message')}")
+                    results.append({
+                        "tool_call_id": f"call_{i}",
+                        "result": {"error": response.get("message", "Unknown error")}
+                    })
+                else:
+                    results.append({
+                        "tool_call_id": f"call_{i}",
+                        "result": response.get("result", "")
+                    })
+            except Exception as e:
+                logger.error(f"Error executing tool call {i+1}: {e}")
+                results.append({
+                    "tool_call_id": f"call_{i}",
+                    "result": {"error": str(e)}
+                })
+
+        return results
+
+    def call_tool_streaming(
+        self,
+        toolkit_id: str,
+        tool_calls: list,
+        provider: str = "openai",
+        auth_token: str = None,
+        user_prompt: str = None,
+        timeout: int = 120,
+    ):
+        """
+        Execute tool calls and stream the response from the backend (SSE).
+
+        Args:
+            toolkit_id (str): Unique ID of the toolkit instance.
+            tool_calls (list): List of raw tool call objects from LLM response.
+            provider (str): LLM provider.
+            auth_token (str, optional): Authentication token.
+            user_prompt (str, optional): Additional user input.
+            timeout (int, optional): Timeout in seconds.
+
+        Yields:
+            dict: Streamed tool execution results.
+        """
+        if not tool_calls:
+            logger.warning("No tool calls provided")
+            return
+
+        if self.protocol not in ["http", "https"]:
+            raise ValueError("Streaming only supported for HTTP protocol")
+
+        formatted_calls = self._format_tool_calls(tool_calls, provider)
+        tool_call = formatted_calls[0]  # Support one tool call for streaming
+        request_id = f"task_{toolkit_id}_{str(uuid.uuid4())}"
+        payload = {
+            "type": "task_request",
+            "request_id": request_id,
+            "toolkit_id": toolkit_id,
+            "auth_token": auth_token,
+            "user_prompt": user_prompt,
+            "payload": {
+                "function": tool_call["function"],
+                "parameters": tool_call["parameters"],
+                "auth_token": tool_call.get("auth_token") or auth_token
+            }
+        }
+
+        return self._http_stream_request("process/", payload, timeout)
+
+    def _http_stream_request(self, endpoint: str, payload: dict, timeout: int):
+        """Make an HTTP POST request and yield SSE events as dicts."""
+        try:
+            resp = self._http_request(endpoint, payload, stream=True)
+            if resp.status_code != 200:
+                raise Exception(f"Streaming request failed: {resp.status_code} {resp.text}")
+
+            for line in resp.iter_lines():
+                if line:
+                    try:
+                        if line.startswith(b"data: "):
+                            data = line[len(b"data: ") :]
+                            event = json.loads(data.decode("utf-8"))
+                            yield event
+                    except Exception as e:
+                        logger.warning(f"Failed to parse SSE event: {e}")
+        except requests.RequestException as e:
+            logger.error(f"Streaming request failed: {e}")
+            raise

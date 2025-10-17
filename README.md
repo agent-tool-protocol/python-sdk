@@ -1,7 +1,7 @@
 # Agent Tool Protocol(ATP)
 
 <p align="center">
-  <img src="assets/atp.png" alt="ATP Logo" />
+  <img src="https://github.com/sam-14uel/Agent-Tool-Protocol/raw/main/assets/atp.png" alt="ATP Logo" />
 </p>
 
 <p align="center">
@@ -47,9 +47,8 @@ from atp_sdk.clients import ToolKitClient
 import requests
 
 client = ToolKitClient(
-    api_key="YOUR_ATP_API_KEY",
-    app_name="my_app",
-    auto_restart=True  # Enable auto-restart on code changes
+    api_key="YOUR_ATP_TOOLKIT_API_KEY",
+    app_name="my_app"
 )
 
 @client.register_tool(
@@ -75,16 +74,14 @@ client.start()
 ToolKitClient(
     api_key: str,
     app_name: str,
-    base_url: str = "https://chatatp-backend.onrender.com",
-    auto_restart: bool = True
+    base_url: str = "https://api.chat-atp.com"
 )
 ```
 
 **Parameters:**
-- `api_key` (str): Your ATP API key.
+- `api_key` (str): Your ATP Toolkit API key.
 - `app_name` (str): Name of your application.
-- `base_url` (str, optional): ATP Server backend URL. Defaults to chatatp-backend.onrender.com.
-- `auto_restart` (bool, optional): Enable auto-restart on code changes. Defaults to True.
+- `base_url` (str, optional): ATP Server backend URL. Defaults to api.chat-atp.com.
 
 ---
 
@@ -153,44 +150,6 @@ client.start()
 
 - Keeps the main thread alive.
 - Handles reconnections automatically.
-- Starts file watching for auto-restart (if enabled).
-
----
-
-### Auto-Restart on Code Changes
-
-The ToolKitClient automatically monitors your Python files for changes and restarts when code is modified, similar to Flask and Django development servers.
-
-**Features:**
-- **File Watching**: Monitors all Python files in your project directory
-- **Smart Detection**: Detects code changes using file hashing
-- **Automatic Restart**: Restarts the toolkit client and re-registers all tools
-- **Seamless Recovery**: Maintains tool registration after restart
-
-**Example:**
-```python
-# Enable auto-restart (default behavior)
-client = ToolKitClient(
-    api_key="YOUR_API_KEY",
-    app_name="my_app",
-    auto_restart=True
-)
-
-# Disable auto-restart
-client = ToolKitClient(
-    api_key="YOUR_API_KEY", 
-    app_name="my_app",
-    auto_restart=False
-)
-```
-
-When code changes are detected, you'll see:
-```
-INFO: Code change detected in /path/to/your/file.py. Restarting toolkit client...
-INFO: Re-registering tools after code change...
-INFO: Re-registered 3 tools
-INFO: Toolkit client restarted successfully after code change
-```
 
 ---
 
@@ -304,259 +263,341 @@ def get_contacts(**kwargs):
 ---
 
 ## Class: LLMClient
-
 The `LLMClient` lets you connect to the ATP Agent Server, retrieve toolkit context, and execute tools or workflows using JSON payloads—perfect for LLM-based agents.
 
 ### Constructor
-
 ```python
 from atp_sdk.clients import LLMClient
 
 llm_client = LLMClient(
-    api_key="YOUR_ATP_API_KEY",
-    ai_provider="openai"  # Options: "openai", "anthropic", "mistral", etc.
+    api_key="YOUR_ATP_LLM_CLIENT_API_KEY",
+    protocol="ws",  # or "http"
+    base_url="https://api.chat-atp.com/ws/v1/atp/llm-client/"
 )
 ```
+**Parameters:**
+- `api_key` (str): Your ATP API key.
+- `protocol` (str, optional): Protocol to use ("ws" or "http"). Defaults to "ws".
+- `base_url` (str, optional): ATP server URL. Defaults to `https://api.chat-atp.com/ws/v1/atp/llm-client/`.
 
 ---
 
 ### get_toolkit_context
-
 Retrieves the toolkit context and system instructions for a given toolkit and user prompt.
-
 ```python
 context = llm_client.get_toolkit_context(
     toolkit_id="your_toolkit_id",
+    provider="openai",  # or "anthropic" or "mistralai"
     user_prompt="What do you want to achieve?"
 )
 ```
+**Returns:**
+A dictionary containing the toolkit context, including provider-specific tool schemas.
 
 ---
 
 ### call_tool
-
-Executes tools using tool call schemas from LLM providers (OpenAI, Anthropic, etc.).
-
+Executes a tool or workflow on the ATP server.
 ```python
-# For OpenAI
 response = llm_client.call_tool(
     toolkit_id="your_toolkit_id",
-    tool_calls=openai_response.choices[0].message.tool_calls
+    tool_calls='{"function": "hello_world", "parameters": {"name": "Alice"}}',
+    provider="openai",  # or "anthropic" or "mistralai"
+    user_prompt="Say hello to Alice."
 )
-
-# For Anthropic
-response = llm_client.call_tool(
-    toolkit_id="your_toolkit_id", 
-    tool_calls=anthropic_response.content[0].tool_use
-)
-
-# For Mistral
-response = llm_client.call_tool(
-    toolkit_id="your_toolkit_id",
-    tool_calls=mistral_response.choices[0].message.tool_calls
-)
+print(response)
 ```
-
-**Parameters:**
-- `toolkit_id` (str): ID of the toolkit to execute.
-- `tool_calls` (list): List of tool call objects from LLM response.
-- `auth_token` (str, optional): Authentication token for the request.
-- `user_prompt` (str, optional): User prompt to include in the request.
-- `timeout` (int, optional): Timeout for the request in seconds. Default is 120.
-
-**Returns:**
-- `list`: List of tool execution results with tool_call_id and result.
-
-**Supported AI Providers:**
-- **OpenAI**: Automatically converts `tool_calls` format
-- **Anthropic**: Automatically converts `tool_use` format  
-- **Mistral**: Automatically converts `tool_calls` format
-- **Generic**: Supports other providers with flexible conversion
+**Arguments:**
+- `toolkit_id`: Unique ID of the toolkit.
+- `tool_calls`: JSON payload from an LLM containing the tool call.
+- `provider`: The LLM provider (e.g., "openai", "anthropic", "mistralai").
+- `user_prompt`: Additional user input to include in the execution.
 
 ---
 
-## Example: Using LLMClient with OpenAI, Anthropic, and Mistral AI
+## OAuth2 Integration & Token Handling
 
-You can use any LLM to generate the JSON workflow, then execute each step with `LLMClient`.
+The ATP SDK supports secure OAuth2 flows for tools that require third-party authentication (e.g., HubSpot, Google, Salesforce).
 
-### 1. OpenAI (GPT-4o)
+**How it works:**
+- Use `LLMClient.initiate_oauth_connection()` to start the OAuth flow and get an authorization URL for the user.
+- Use `LLMClient.wait_for_connection()` to poll for completion and retrieve the integration ID.
+- Use `LLMClient.get_user_tokens()` to fetch the user's access and refresh tokens for use in tool calls.
 
+**Example:**
+```python
+from atp_sdk.clients import LLMClient
+
+llm_client = LLMClient(api_key="YOUR_ATP_LLM_CLIENT_API_KEY")
+
+# Step 1: Initiate OAuth connection
+connection = llm_client.initiate_oauth_connection(
+    platform_id="PLATFORM_ID",
+    external_user_id="user@example.com",
+    developer_redirect_url="https://your-app.com/oauth/callback"
+)
+print("Authorize at:", connection["authorization_url"])
+
+# Step 2: Wait for connection
+account = llm_client.wait_for_connection(
+    platform_id="PLATFORM_ID",
+    external_user_id="user@example.com"
+)
+print("Integration ID:", account["integration_id"])
+
+# Step 3: Fetch tokens
+tokens = llm_client.get_user_tokens(
+    platform_id="PLATFORM_ID",
+    external_user_id="user@example.com"
+)
+print("Access token:", tokens["access_token"])
+```
+
+**Note:**  
+- You only need to handle OAuth and fetch tokens; the SDK will automatically inject tokens into tool calls as needed.
+- See the [LLMClient](#class-llmclient) section for more details.
+
+---
+
+## Request/Response Flow
+
+### **1. LLM Requests Toolkit Context**
+- The LLM (OpenAI, Anthropic, or Mistral) sends a request to the ATP server to get the toolkit context.
+- The ATP server responds with a list of available tools and their schemas.
+
+**Request:**
+```json
+{
+  "type": "get_toolkit_context",
+  "toolkit_id": "your_toolkit_id",
+  "request_id": "uuid",
+  "provider": "openai",
+  "user_prompt": "What do you want to achieve?"
+}
+```
+
+**Response:**
+```json
+{
+  "type": "toolkit_context",
+  "request_id": "uuid",
+  "payload": {
+    "toolkit_id": "your_toolkit_id",
+    "toolkit_name": "Example Toolkit",
+    "caption": "Example Caption",
+    "provider": "openai",
+    "tools": [
+      {
+        "type": "function",
+        "name": "hello_world",
+        "description": "Returns a greeting.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string", "description": "Name to greet"}
+          },
+          "required": ["name"]
+        }
+      }
+    ],
+    "user_prompt": "What do you want to achieve?"
+  }
+}
+```
+
+---
+
+### **2. LLM Generates Tool Calls**
+- The LLM uses the toolkit context to generate tool calls.
+- The LLM sends the tool calls to the ATP server for execution.
+
+**Request:**
+```json
+{
+  "type": "task_request",
+  "toolkit_id": "your_toolkit_id",
+  "request_id": "uuid",
+  "payload": {
+    "function": "hello_world",
+    "parameters": {"name": "Alice"}
+  },
+  "provider": "openai",
+  "user_prompt": "Say hello to Alice."
+}
+```
+
+---
+
+### **3. ATP Server Executes Tool**
+- The ATP server receives the tool call and executes the corresponding tool.
+- The ATP server sends the tool's response back to the LLM.
+
+**Response:**
+```json
+{
+  "type": "task_response",
+  "request_id": "uuid",
+  "payload": {
+    "result": {"message": "Hello, Alice!"}
+  }
+}
+```
+
+---
+
+## Using LLMClient with OpenAI, Anthropic, and Mistral AI
+
+### OpenAI
 ```python
 import openai
 from atp_sdk.clients import LLMClient
 
-client = openai.OpenAI(api_key="YOUR_OPENAI_API_KEY")
-llm_client = LLMClient(api_key="YOUR_ATP_API_KEY")
+openai_client = openai.OpenAI(api_key="YOUR_OPENAI_API_KEY")
+llm_client = LLMClient(api_key="YOUR_ATP_LLM_CLIENT_API_KEY")
 
-# Get toolkit context and system prompt
-context = llm_client.get_toolkit_context(toolkit_id="your_toolkit_id", user_prompt="Create a company and then list contacts.")
+# Get toolkit context
+context = llm_client.get_toolkit_context(
+    toolkit_id="your_toolkit_id",
+    provider="openai",
+    user_prompt="Create a company and then list contacts."
+)
 
-# Use OpenAI to generate the workflow JSON
-response = client.chat.completions.create(
+# Use OpenAI to generate tool calls
+response = openai_client.chat.completions.create(
     model="gpt-4o",
     messages=[
-        {"role": "system", "content": context},
+        {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "Create a company and then list contacts."}
     ],
-    tools=[...],  # Your tool definitions
+    tools=context["tools"],
     tool_choice="auto"
 )
 
-# Execute tool calls directly
-if response.choices[0].message.tool_calls:
-    results = llm_client.call_tool(
+# Extract tool calls
+tool_calls = response.choices[0].message.tool_calls
+
+
+if tool_calls:
+
+    result = llm_client.call_tool(
         toolkit_id="your_toolkit_id",
-        tool_calls=response.choices[0].message.tool_calls
+        tool_calls=tool_calls,
+        provider="openai",
+        user_prompt="Create a company and then list contacts."
     )
-    print(results)
+
+    print(f"Tool call result: {result}")
 ```
 
-### 2. Anthropic (Claude)
+---
 
+### Anthropic
 ```python
 import anthropic
 from atp_sdk.clients import LLMClient
 
-llm_client = LLMClient(api_key="YOUR_ATP_API_KEY")
-context = llm_client.get_toolkit_context(toolkit_id="your_toolkit_id", user_prompt="...")
+anthropic_client = anthropic.Anthropic(api_key="YOUR_ANTHROPIC_API_KEY")
+llm_client = LLMClient(api_key="YOUR_ATP_LLM_CLIENT_API_KEY")
 
-client = anthropic.Anthropic(api_key="YOUR_ANTHROPIC_API_KEY")
-response = client.messages.create(
+# Get toolkit context
+context = llm_client.get_toolkit_context(
+    toolkit_id="your_toolkit_id",
+    provider="anthropic",
+    user_prompt="Create a company and then list contacts."
+)
+
+# Use Anthropic to generate tool calls
+response = anthropic_client.messages.create(
     model="claude-3-opus-20240229",
     max_tokens=1024,
     messages=[
-        {"role": "user", "content": context}
+        {"role": "user", "content": "Create a company and then list contacts."}
     ],
-    tools=[...],  # Your tool definitions
-    tool_choice="auto"
+    tools=context["tools"]
 )
 
-# Execute tool calls directly
-if response.content[0].tool_use:
-    results = llm_client.call_tool(
+# Extract tool calls
+tool_calls = response.content
+
+# Loop through tool calls and execute each one
+for tool_call in tool_calls:
+    tool_call_json = {
+        "function": tool_call.name,
+        "parameters": tool_call.input
+    }
+
+    result = llm_client.call_tool(
         toolkit_id="your_toolkit_id",
-        tool_calls=response.content[0].tool_use
+        tool_calls=tool_call_json,
+        provider="anthropic",
+        user_prompt="Create a company and then list contacts."
     )
-    print(results)
+
+    print(f"Tool call result: {result}")
 ```
 
-### 3. Mistral AI
+---
 
+### Mistral AI
 ```python
 from mistralai.client import MistralClient
 from atp_sdk.clients import LLMClient
 
-llm_client = LLMClient(api_key="YOUR_ATP_API_KEY")
-context = llm_client.get_toolkit_context(toolkit_id="your_toolkit_id", user_prompt="...")
+mistral_client = MistralClient(api_key="YOUR_MISTRAL_API_KEY")
+llm_client = LLMClient(api_key="YOUR_ATP_LLM_CLIENT_API_KEY")
 
-client = MistralClient(api_key="YOUR_MISTRAL_API_KEY")
-response = client.chat(
+# Get toolkit context
+context = llm_client.get_toolkit_context(
+    toolkit_id="your_toolkit_id",
+    provider="mistralai",
+    user_prompt="Create a company and then list contacts."
+)
+
+# Use Mistral to generate tool calls
+response = mistral_client.chat(
     model="mistral-large-latest",
-    messages=[{"role": "user", "content": context}],
-    tools=[...],  # Your tool definitions
-    tool_choice="auto"
+    messages=[{"role": "user", "content": "Create a company and then list contacts."}],
+    tools=context["tools"]
 )
 
-# Execute tool calls directly
-if response.choices[0].message.tool_calls:
-    results = llm_client.call_tool(
+# Extract tool calls
+tool_calls = response.choices[0].message.tool_calls
+
+# Loop through tool calls and execute each one
+if tool_calls:
+
+    result = llm_client.call_tool(
         toolkit_id="your_toolkit_id",
-        tool_calls=response.choices[0].message.tool_calls
+        tool_calls=tool_calls,
+        provider="mistralai",
+        user_prompt="Create a company and then list contacts."
     )
-    print(results)
+
+    print(f"Tool call result: {result}")
 ```
 
 ---
 
-## Handling Tool Calls
-
-The `call_tool` method automatically handles multiple tool calls from LLM responses:
+## Handling Multi-Step Tool Calls
+When the LLM generates multiple tool calls, loop through them and execute each one sequentially:
 
 ```python
-# OpenAI example
-response = openai.chat.completions.create(
-    model="gpt-4o",
-    messages=[...],
-    tools=[...],
-    tool_choice="auto"
-)
+# Loop through tool calls and execute each one
+for tool_call in tool_calls:
 
-# Execute all tool calls
-if response.choices[0].message.tool_calls:
-    results = llm_client.call_tool(
+    result = llm_client.call_tool(
         toolkit_id="your_toolkit_id",
-        tool_calls=response.choices[0].message.tool_calls
+        tool_calls=[tool_call],
+        provider="openai",  # or "anthropic" or "mistralai"
+        user_prompt="Create a company and then list contacts."
     )
-    
-    # Results contain tool_call_id and result for each tool
-    for result in results:
-        print(f"Tool {result['tool_call_id']}: {result['result']}")
+
+    print(f"Tool call result: {result}")
 ```
-
-**Features:**
-- **Batch Execution**: Handles multiple tool calls in a single request
-- **Provider Agnostic**: Automatically converts different AI provider formats
-- **Result Tracking**: Each result includes the original tool_call_id
-- **Error Handling**: Individual tool failures don't stop other executions
-
----
-
-## Example: Full Workflow
-
-```python
-from atp_sdk.clients import LLMClient
-import openai
-
-llm_client = LLMClient(api_key="YOUR_ATP_API_KEY", ai_provider="openai")
-context = llm_client.get_toolkit_context(toolkit_id="your_toolkit_id", user_prompt="...")
-
-response = openai.chat.completions.create(
-    model="gpt-4o",
-    messages=[
-        {"role": "system", "content": context},
-        {"role": "user", "content": "Do a multi-step task."}
-    ],
-    tools=[...],  # Your tool definitions
-    tool_choice="auto"
-)
-
-# Execute tool calls directly
-if response.choices[0].message.tool_calls:
-    results = llm_client.call_tool(
-        toolkit_id="your_toolkit_id",
-        tool_calls=response.choices[0].message.tool_calls
-    )
-    print(results)
-else:
-    print("No tool calls generated")
-```
-
----
-
-**Tip:**  
-The LLMClient automatically converts tool call formats from different AI providers. Just pass the tool_calls directly from your LLM response.
 
 ---
 
 ## Advanced Usage
-
-### Auto-Restart Configuration
-
-```python
-# Enable auto-restart with custom file watching
-client = ToolKitClient(
-    api_key="YOUR_API_KEY",
-    app_name="my_app",
-    auto_restart=True
-)
-
-# Disable auto-restart for production
-client = ToolKitClient(
-    api_key="YOUR_API_KEY",
-    app_name="my_app",
-    auto_restart=False
-)
-```
 
 ### Custom Backend
 
@@ -578,20 +619,160 @@ def tool1(**kwargs): ...
 def tool2(**kwargs): ...
 ```
 
-### AI Provider Integration
+---
+
+## Framework Integration: Django, FastAPI, and Flask
+
+### Django
+
+**How to use:**
+1. Install:  
+   `pip install AgentToolProtocol django`
+2. Add `"django_atp"` to `INSTALLED_APPS` in your `settings.py`.
+3. Include `path("", include("django_atp.urls"))` in your project `urls.py`.
+4. Register your toolkits and tools in a module in your app (e.g. `myapp/atp_tools.py`), and import this module in your app’s `apps.py` `ready()` method to ensure registration at startup:
+   ```python
+   # myapp/apps.py
+   from django.apps import AppConfig
+   class MyAppConfig(AppConfig):
+       name = "myapp"
+       def ready(self):
+           import myapp.atp_tools
+   ```
+5. Each registered tool is exposed at `/atp/<toolkit_name>/<tool_name>/` (GET for context, POST payload of parameters for execution).
+6. Visit `/atp/<toolkit_name>/` for toolkit details and a list of tools.
+
+---
+
+### FastAPI
+
+**How to use:**
+1. Install:  
+   `pip install AgentToolProtocol fastapi uvicorn`
+2. Register your toolkits and tools in a module (e.g. `atp_tools.py`), and import it in your FastAPI app before starting.
+3. Example endpoints:
+   ```python
+   from fastapi import FastAPI, Request
+   from fastapi.responses import JSONResponse
+   from fastapi_atp.registry import get_client
+   import atp_tools  # Ensure toolkit registration
+
+   app = FastAPI()
+
+   @app.get("/atp/{toolkit_name}/{tool_name}/")
+   async def get_tool(toolkit_name: str, tool_name: str):
+       client = get_client(toolkit_name)
+       if not client:
+           return JSONResponse({"error": "Toolkit not found"}, status_code=404)
+       tool = client.registered_tools.get(tool_name)
+       if not tool:
+           return JSONResponse({"error": "Tool not found"}, status_code=404)
+       return JSONResponse(tool)
+
+   @app.post("/atp/{toolkit_name}/{tool_name}/")
+   async def post_tool(toolkit_name: str, tool_name: str, request: Request):
+       client = get_client(toolkit_name)
+       if not client:
+           return JSONResponse({"error": "Toolkit not found"}, status_code=404)
+       tool = client.registered_tools.get(tool_name)
+       if not tool:
+           return JSONResponse({"error": "Tool not found"}, status_code=404)
+       params = await request.json()
+       result = tool["function"](**params)
+       return JSONResponse({"result": result})
+
+   @app.get("/atp/{toolkit_name}/")
+   async def get_toolkit(toolkit_name: str):
+       client = get_client(toolkit_name)
+       if not client:
+           return JSONResponse({"error": "Toolkit not found"}, status_code=404)
+       tools = list(client.registered_tools.keys())
+       return JSONResponse({"toolkit": toolkit_name, "tools": tools})
+   ```
+4. Run your fastAPI app with:  
+   `uvicorn your_app_module:app --reload`
+
+5. Visit `/atp/<toolkit_name>/` for toolkit details and a list of tools.
+
+6. Visit `/atp/<toolkit_name>/<tool_name>/` for tool details.
+
+---
+
+### Flask
+
+**How to use:**
+1. Install:  
+   `pip install AgentToolProtocol flask`
+2. Register your toolkits and tools in a module (e.g. `atp_tools.py`), and import it in your Flask app before starting.
+3. Example endpoints:
+   ```python
+   from flask import Flask, request, jsonify
+   from django_atp.registry import get_client
+   import atp_tools  # Ensure toolkit registration
+
+   app = Flask(__name__)
+
+   @app.route("/atp/<toolkit_name>/<tool_name>/", methods=["GET", "POST"])
+   def tool_endpoint(toolkit_name, tool_name):
+       client = get_client(toolkit_name)
+       if not client:
+           return jsonify({"error": "Toolkit not found"}), 404
+       tool = client.registered_tools.get(tool_name)
+       if not tool:
+           return jsonify({"error": "Tool not found"}), 404
+       if request.method == "GET":
+           return jsonify(tool)
+       params = request.json if request.is_json else request.form.to_dict()
+       result = tool["function"](**params)
+       return jsonify({"result": result})
+
+   @app.route("/atp/<toolkit_name>/", methods=["GET"])
+   def toolkit_endpoint(toolkit_name):
+       client = get_client(toolkit_name)
+       if not client:
+           return jsonify({"error": "Toolkit not found"}), 404
+       tools = list(client.registered_tools.keys())
+       return jsonify({"toolkit": toolkit_name, "tools": tools})
+
+   if __name__ == "__main__":
+       app.run(debug=True)
+   ```
+
+4. Run your Flask app with:  
+   `python your_flask_app.py`
+
+5. Visit `/atp/<toolkit_name>/` for toolkit details and a list of tools.
+
+6. Visit `/atp/<toolkit_name>/<tool_name>/` for tool details.
+
+
+# Example atp_tools.py for Flask/FastAPI/Django
 
 ```python
-# OpenAI integration
-llm_client = LLMClient(api_key="YOUR_ATP_API_KEY", ai_provider="openai")
+from atp_sdk.clients import ToolKitClient
+from django_atp.registry import register_client  # For Django
+from fastapi_atp.registry import register_client  # For FastAPI
+from flask_atp.registry import register_client  # For Flask
 
-# Anthropic integration  
-llm_client = LLMClient(api_key="YOUR_ATP_API_KEY", ai_provider="anthropic")
+# Initialize the client
+client = ToolKitClient(
+    api_key="YOUR_ATP_API_TOOLKIT_KEY",
+    app_name="<your_toolkit_name>"
+)
 
-# Mistral integration
-llm_client = LLMClient(api_key="YOUR_ATP_API_KEY", ai_provider="mistral")
+# Register the client (Django/FastAPI/Flask)
+register_client("<your_toolkit_name>", client)
 
-# Custom provider
-llm_client = LLMClient(api_key="YOUR_ATP_API_KEY", ai_provider="custom")
+# Define and register tools the usual way but this time no need to call start() at the end of the file
+@client.register_tool(
+    function_name="hello_world",
+    params=['name'],
+    required_params=['name'],
+    description="Returns a greeting.",
+    auth_provider=None, auth_type=None, auth_with=None
+)
+def hello_world(name):
+    return f"Hello, {name}!"
 ```
 
 ---
@@ -605,7 +786,7 @@ See LICENSE for details.
 
 ## Feedback & Issues
 
-For bug reports or feature requests, please open an issue on [GitHub](https://github.com/agent-tool-protocol/python-sdk/).
+For bug reports or feature requests, please open an issue on [GitHub](https://github.com/sam-14uel/Agent-Tool-Protocol).
 
 ---
 

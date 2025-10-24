@@ -1,8 +1,3 @@
-"""
-Interactive terminal example using Mistral LLM and ATP SDK LLMClient.
-This script allows users to input prompts and see how the agent plans tool usages.
-"""
-
 from mistralai import Mistral
 from atp_sdk.clients import LLMClient
 import json
@@ -40,16 +35,15 @@ FINAL_RESPONDER_PROMPT = {
 }
 
 # --- Clients ---
-mistral_client = Mistral(api_key="YOUR MISTRAL API KEY HERE")
-llm_client = LLMClient(api_key="YOUR ATP LLM CLIENT API KEY HERE", protocol="https")
+mistral_client = Mistral(api_key="YOUR_MISTRAL_API_KEY_HERE")
+llm_client = LLMClient(api_key="YOUR_ATP_LLM_CLIENT_API_KEY", protocol="https")
 
 conversation_history = []  # Shared across turns
 
 
 def main():
-    # toolkit_id = "RnDTDNwMdRuBML4KLTmxd3" # serper_toolkit
-    toolkit_id = "serper_toolkit" # serper_toolkit
-    auth_token = "YOUR SERPER API KEY HERE" # auth_token
+    toolkit_id = "YOUR_TOOLKIT_ID_OR_SLUG_OR_UNIQUE_NAME" # e.g., "serper_toolkit", "github_toolkit", "firecrawl_toolkit", "tavily_toolkit"
+    auth_token = "YOUR_API_OR_ACCESS_TOKEN_FOR_TOOL_ACCESS" # e.g., Serper API key, GitHub token, Firecrawl API key, Tavily API key
     provider = "mistralai"
 
     print("Welcome to the Interactive ATP Terminal. Type your prompt or 'exit' to quit.")
@@ -92,8 +86,6 @@ def main():
             tool_calls = plan_response.choices[0].message.tool_calls
 
             if tool_calls:
-                # Get the original tool_call_id from the planner's response
-                original_tool_call_id = tool_calls[0].id
 
                 # Append the assistant's tool-calling message to the conversation history
                 conversation_history.append({
@@ -124,27 +116,26 @@ def main():
 
                 # Display tool execution results
                 results_summary = "\n".join(
-                    f"Tool call result (ID: {result['tool_call_id']}): {result['result']}"
-                    for result in results
+                    f"Tool '{r['name']}' (ID: {r['tool_call_id']}): {r['content'][:200]}..."  # Use 'content' (JSON string), truncate to avoid spam
+                    for r in results
                 )
                 print_turn("AGENT", f"Tool execution results:\n{results_summary}", prefix="> ")
-
-                # Now, append the tool results using the correct original ID
-                tool_results_content = "\n".join(
-                    f"Tool call (ID: {result['tool_call_id']}): {result['result']}"
-                    for result in results
-                )
-                conversation_history.append({
-                    "role": "tool",
-                    "tool_call_id": original_tool_call_id, # Use the correct original ID
-                    "content": tool_results_content
-                })
+                
+                for result in results:
+                    conversation_history.append({
+                        "role": result["role"],
+                        "name": result["name"],
+                        "content": result["content"],
+                        "tool_call_id": result["tool_call_id"]
+                    })
 
                 # --------- FINAL RESPONDER STEP ---------
                 print_turn("AGENT", "Generating final response...", prefix="> ")
                 final_response = mistral_client.chat.complete(
                     model="mistral-large-2411",
                     messages=[FINAL_RESPONDER_PROMPT] + conversation_history,
+                    # tools=[],          # No tools
+                    # tool_choice="none" # Ensure no accidental tool calls
                 )
 
                 final_content = final_response.choices[0].message.content

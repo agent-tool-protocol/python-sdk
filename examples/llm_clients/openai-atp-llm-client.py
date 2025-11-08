@@ -41,7 +41,7 @@ conversation_history = []  # Shared across turns
 
 
 def main():
-    toolkit_id = "YOUR_TOOLKIT_ID_OR_SLUG_OR_UNIQUE_NAME" # e.g., "serper_toolkit", "github_toolkit", "firecrawl_toolkit", "tavily_toolkit"
+    toolkit_id = "serper_toolkit" # e.g., "serper_toolkit", "github_toolkit", "firecrawl_toolkit", "tavily_toolkit"
     auth_token = "YOUR_API_OR_ACCESS_TOKEN_FOR_TOOL_ACCESS" # e.g., Serper API key, GitHub token, Firecrawl API key, Tavily API key
     provider = "openai"
 
@@ -68,6 +68,8 @@ def main():
                 provider=provider,
                 user_prompt=user_prompt
             )
+
+            print(json.dumps(context["tools"], indent=2))
 
             conversation_history.append({"role": "user", "content": user_prompt})
 
